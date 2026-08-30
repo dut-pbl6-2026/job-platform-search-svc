@@ -47,6 +47,9 @@ app.MapGet("/", () => Results.Ok(new { service = "search", version = "0.1.0" }))
 // Search endpoints (SRS SEARCH-01)
 app.MapSearchEndpoints();
 
+// Indexing endpoints (HTTP Sync)
+app.MapIndexEndpoints();
+
 // Ensure Elasticsearch index exists on startup
 using (var scope = app.Services.CreateScope())
 {
