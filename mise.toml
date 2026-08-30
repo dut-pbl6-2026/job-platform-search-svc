@@ -1,2 +1,30 @@
 [tools]
 dotnet = "10.0.100"
+
+[tasks.build]
+description = "Build solution with zero warnings"
+run = "dotnet build SearchService.sln --warnaserror"
+
+[tasks.test]
+description = "Run all unit tests"
+run = "dotnet test SearchService.sln --no-build"
+
+[tasks.format]
+description = "Check formatting without modifying files"
+run = "dotnet format --verify-no-changes SearchService.sln"
+
+[tasks.run]
+description = "Run Search API service locally"
+run = "dotnet run --project src/Search.Api"
+
+[tasks.pack-shared]
+description = "Pack SharedKernel and copy to local-feed"
+run = "dotnet pack ../job-platform-shared/src/SharedKernel/SharedKernel.csproj -c Release -o ../job-platform-shared/artifacts && cp ../job-platform-shared/artifacts/*.nupkg local-feed/"
+
+[tasks.sync-env]
+description = "Sync env from infra (ORG=dut-pbl6-2026)"
+run = "../job-platform-infra/scripts/sync-env.sh dev"
+
+[tasks.verify]
+description = "Verify 14 repos have .env"
+run = 'ls -1 ../job-platform-*/.env 2>/dev/null | wc -l; echo " repos have .env (expected 14)"'
