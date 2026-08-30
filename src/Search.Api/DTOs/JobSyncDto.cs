@@ -17,7 +17,7 @@ public record JobSyncDto(
     string? CategoryName = null,
     string EmploymentType = "FullTime",
     string? ExperienceLevel = null,
-    string Status = "Published",
+    string Status = "Active",
     string? RecruiterId = null,
     DateTime? CreatedAt = null,
     DateTime? UpdatedAt = null,

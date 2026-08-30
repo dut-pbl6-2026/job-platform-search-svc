@@ -63,6 +63,17 @@ public static class IndexEndpoints
                 });
             }
 
+            const int maxBulkSize = 1000;
+            if (dtos.Count > maxBulkSize)
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Batch too large",
+                    Detail = $"Maximum {maxBulkSize} documents per bulk-index request."
+                });
+            }
+
             var documents = dtos.Select(d => d.ToDocument());
             var count = await searchService.BulkIndexJobsAsync(documents, cancellationToken);
 
