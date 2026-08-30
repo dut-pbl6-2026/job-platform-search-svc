@@ -1,3 +1,4 @@
+using Search.Api.Endpoints;
 using Search.Infrastructure.Extensions;
 using Search.Infrastructure.Services;
 
@@ -42,6 +43,9 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "search" }
 
 app.MapGet("/", () => Results.Ok(new { service = "search", version = "0.1.0" }))
    .ExcludeFromDescription();
+
+// Search endpoints (SRS SEARCH-01)
+app.MapSearchEndpoints();
 
 // Ensure Elasticsearch index exists on startup
 using (var scope = app.Services.CreateScope())
