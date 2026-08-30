@@ -15,7 +15,7 @@ public class JobDocumentTests
         doc.Id.Should().BeEmpty();
         doc.Currency.Should().Be("VND");
         doc.EmploymentType.Should().Be("FullTime");
-        doc.Status.Should().Be("Published");
+        doc.Status.Should().Be("Active");
         doc.CreatedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(2));
         doc.UpdatedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(2));
     }

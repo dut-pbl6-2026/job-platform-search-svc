@@ -47,25 +47,25 @@ public class ElasticsearchService : ISearchService
                 ));
         }
 
-        // 2. Location filter / matching (SRS SEARCH-01-03)
+        // 2. Location filter — MatchPhrase for exact phrase matching (SRS SEARCH-01-03)
         if (!string.IsNullOrWhiteSpace(query.Location))
         {
             var location = query.Location.Trim();
             filterClauses.Add(q => q
-                .Match(m => m
+                .MatchPhrase(m => m
                     .Field(f => f.Location)
                     .Query(location)
                 ));
         }
 
-        // 3. Status filter (Default: Published)
-        filterClauses.Add(q => q.Term(t => t.Field(f => f.Status).Value("Published")));
+        // 3. Status filter (Default: Active — matches backend JobStatus enum)
+        filterClauses.Add(q => q.Term(t => t.Field(f => f.Status).Value("Active")));
 
-        // 4. Category filter
+        // 4. Category filter — use CategoryId (keyword) for exact match, not CategoryName (text)
         if (!string.IsNullOrWhiteSpace(query.Category))
         {
             var cat = query.Category.Trim();
-            filterClauses.Add(q => q.Term(t => t.Field(f => f.CategoryName!).Value(cat)));
+            filterClauses.Add(q => q.Term(t => t.Field(f => f.CategoryId!).Value(cat)));
         }
 
         // 5. Employment Type filter
@@ -83,15 +83,21 @@ public class ElasticsearchService : ISearchService
         }
 
         // 7. Salary range filter (SRS 3.4.4)
-        if (query.MinSalary.HasValue || query.MaxSalary.HasValue)
+        //    User specifies minSalary → job's SalaryMax >= minSalary (job can pay at least minSalary)
+        //    User specifies maxSalary → job's SalaryMin <= maxSalary (job's min is within budget)
+        if (query.MinSalary.HasValue)
         {
-            var rangeQuery = new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMax!));
-            if (query.MinSalary.HasValue)
-                rangeQuery.Gte = (double)query.MinSalary.Value;
-            if (query.MaxSalary.HasValue)
-                rangeQuery.Lte = (double)query.MaxSalary.Value;
-
-            filterClauses.Add(q => q.Range(new RangeQuery(rangeQuery)));
+            filterClauses.Add(q => q
+                .Range(new RangeQuery(
+                    new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMax!))
+                    { Gte = (double)query.MinSalary.Value })));
+        }
+        if (query.MaxSalary.HasValue)
+        {
+            filterClauses.Add(q => q
+                .Range(new RangeQuery(
+                    new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMin!))
+                    { Lte = (double)query.MaxSalary.Value })));
         }
 
         var response = await _client.SearchAsync<JobDocument>(s => s
@@ -148,7 +154,7 @@ public class ElasticsearchService : ISearchService
                         sh => sh.MatchPhrasePrefix(m => m.Field(f => f.Title).Query(trimmed)),
                         sh => sh.MatchPhrasePrefix(m => m.Field(f => f.CompanyName).Query(trimmed))
                     )
-                    .Filter(f => f.Term(t => t.Field(fld => fld.Status).Value("Published")))
+                    .Filter(f => f.Term(t => t.Field(fld => fld.Status).Value("Active")))
                 )
             ),
             cancellationToken);

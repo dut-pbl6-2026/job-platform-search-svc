@@ -44,7 +44,7 @@ public class JobDocument
     public string? ExperienceLevel { get; set; }
 
     [JsonPropertyName("status")]
-    public string Status { get; set; } = "Published";
+    public string Status { get; set; } = "Active";
 
     [JsonPropertyName("recruiter_id")]
     public string? RecruiterId { get; set; }
