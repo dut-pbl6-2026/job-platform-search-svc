@@ -62,6 +62,7 @@ public class ElasticsearchService : ISearchService
         filterClauses.Add(q => q.Term(t => t.Field(f => f.Status).Value("Active")));
 
         // 4. Category filter
+        // 4. Category filter — use CategoryId (keyword) for exact match, not CategoryName (text)
         if (!string.IsNullOrWhiteSpace(query.Category))
         {
             var cat = query.Category.Trim();
