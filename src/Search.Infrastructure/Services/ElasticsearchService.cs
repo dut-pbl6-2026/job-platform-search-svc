@@ -61,6 +61,7 @@ public class ElasticsearchService : ISearchService
         // 3. Status filter (Default: Active — matches backend JobStatus enum)
         filterClauses.Add(q => q.Term(t => t.Field(f => f.Status).Value("Active")));
 
+        // 4. Category filter
         // 4. Category filter — use CategoryId (keyword) for exact match, not CategoryName (text)
         if (!string.IsNullOrWhiteSpace(query.Category))
         {
@@ -83,21 +84,20 @@ public class ElasticsearchService : ISearchService
         }
 
         // 7. Salary range filter (SRS 3.4.4)
-        //    User specifies minSalary → job's SalaryMax >= minSalary (job can pay at least minSalary)
-        //    User specifies maxSalary → job's SalaryMin <= maxSalary (job's min is within budget)
+        //    Job has salary range [SalaryMin, SalaryMax].
+        //    Overlap: user's [min,max] must intersect with job's [min,max].
+        //    So: SalaryMax >= userMin AND SalaryMin <= userMax
         if (query.MinSalary.HasValue)
         {
-            filterClauses.Add(q => q
-                .Range(new RangeQuery(
-                    new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMax!))
-                    { Gte = (double)query.MinSalary.Value })));
+            filterClauses.Add(q => q.Range(new RangeQuery(
+                new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMax!))
+                { Gte = (double)query.MinSalary.Value })));
         }
         if (query.MaxSalary.HasValue)
         {
-            filterClauses.Add(q => q
-                .Range(new RangeQuery(
-                    new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMin!))
-                    { Lte = (double)query.MaxSalary.Value })));
+            filterClauses.Add(q => q.Range(new RangeQuery(
+                new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMin!))
+                { Lte = (double)query.MaxSalary.Value })));
         }
 
         var response = await _client.SearchAsync<JobDocument>(s => s
@@ -189,7 +189,65 @@ public class ElasticsearchService : ISearchService
         };
     }
 
-    public virtual Task<bool> IndexJobAsync(JobDocument document, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-    public virtual Task<int> BulkIndexJobsAsync(IEnumerable<JobDocument> documents, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-    public virtual Task<bool> DeleteJobAsync(string jobId, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public virtual async Task<bool> IndexJobAsync(JobDocument document, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(document.Id))
+            throw new ArgumentException("JobDocument.Id must not be empty.", nameof(document));
+
+        var response = await _client.IndexAsync(document, _options.Index, idx => idx
+            .Id(document.Id)
+            .Refresh(Refresh.WaitFor),
+            cancellationToken);
+
+        if (!response.IsValidResponse)
+        {
+            _logger.LogError("Failed to index job '{JobId}': {DebugInfo}", document.Id, response.DebugInformation);
+            return false;
+        }
+
+        _logger.LogInformation("Successfully indexed job '{JobId}'.", document.Id);
+        return true;
+    }
+
+    public virtual async Task<int> BulkIndexJobsAsync(IEnumerable<JobDocument> documents, CancellationToken cancellationToken = default)
+    {
+        var docList = documents.ToList();
+        if (docList.Count == 0)
+            return 0;
+
+        var response = await _client.BulkAsync(b => b
+            .Index(_options.Index)
+            .IndexMany(docList, (descriptor, doc) => descriptor.Id(doc.Id))
+            .Refresh(Refresh.WaitFor),
+            cancellationToken);
+
+        if (!response.IsValidResponse || response.Errors)
+        {
+            _logger.LogWarning("Bulk index completed with some errors: {DebugInfo}", response.DebugInformation);
+            var successCount = response.Items.Count(item => item.IsValid);
+            return successCount;
+        }
+
+        _logger.LogInformation("Successfully bulk indexed {Count} jobs.", docList.Count);
+        return docList.Count;
+    }
+
+    public virtual async Task<bool> DeleteJobAsync(string jobId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            throw new ArgumentException("JobId must not be empty.", nameof(jobId));
+
+        var response = await _client.DeleteAsync(_options.Index, jobId, d => d
+            .Refresh(Refresh.WaitFor),
+            cancellationToken);
+
+        if (!response.IsValidResponse && response.ApiCallDetails?.HttpStatusCode != 404)
+        {
+            _logger.LogError("Failed to delete job '{JobId}': {DebugInfo}", jobId, response.DebugInformation);
+            return false;
+        }
+
+        _logger.LogInformation("Successfully deleted job '{JobId}' from index.", jobId);
+        return true;
+    }
 }
