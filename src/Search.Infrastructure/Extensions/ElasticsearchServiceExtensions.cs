@@ -2,6 +2,7 @@ using Elastic.Clients.Elasticsearch;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Search.Core.Interfaces;
 using Search.Infrastructure.Configuration;
 using Search.Infrastructure.Services;
 
@@ -43,6 +44,7 @@ public static class ElasticsearchServiceExtensions
         });
 
         services.AddSingleton<ElasticsearchInitializer>();
+        services.AddSingleton<ISearchService, ElasticsearchService>();
 
         return services;
     }
