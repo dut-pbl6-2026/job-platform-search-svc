@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Search.Api.DTOs;
 using Search.Core.Interfaces;
 using Search.Core.Models;
+using Search.Infrastructure.Services;
 
 namespace Search.Api.Endpoints;
 
@@ -25,6 +26,7 @@ public static class SearchEndpoints
             [FromQuery] int size = 20,
             [FromQuery] string? sortBy = null,
             [FromServices] ISearchService searchService = null!,
+            [FromServices] ISearchCache cache = null!,
             CancellationToken cancellationToken = default) =>
         {
             if (page < 0)
@@ -60,7 +62,9 @@ public static class SearchEndpoints
                 SortBy: sortBy
             );
 
-            var result = await searchService.SearchJobsAsync(searchQuery, cancellationToken);
+            var result = await cache.GetAsync(searchQuery, cancellationToken)
+                ?? await searchService.SearchJobsAsync(searchQuery, cancellationToken);
+            await cache.SetAsync(searchQuery, result, cancellationToken);
 
             var response = new JobSearchResponseDto(
                 Items: result.Items,
