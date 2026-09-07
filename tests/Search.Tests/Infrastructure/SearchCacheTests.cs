@@ -62,4 +62,20 @@ public class SearchCacheTests
 
         cached.Should().BeNull();
     }
+
+    [Fact]
+    public async Task InvalidateJob_ShouldOrphanPreviouslyCachedResults()
+    {
+        var cache = CreateCache();
+        var query = new SearchQuery(Keyword: "stale", Page: 0, Size: 20);
+        var result = SearchResult<JobDocument>.Create(
+            new[] { new JobDocument { Id = "j1", Title = "Stale Engineer" } }, 1, 0, 20);
+
+        await cache.SetAsync(query, result);
+        (await cache.GetAsync(query)).Should().NotBeNull();
+
+        await cache.InvalidateJobAsync("j1");
+
+        (await cache.GetAsync(query)).Should().BeNull();
+    }
 }

@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Mvc;
 using Search.Api.DTOs;
 using Search.Core.Interfaces;
 using Search.Core.Models;
-using Search.Infrastructure.Services;
 
 namespace Search.Api.Endpoints;
 
@@ -62,8 +61,22 @@ public static class SearchEndpoints
                 SortBy: sortBy
             );
 
-            var result = await cache.GetAsync(searchQuery, cancellationToken)
-                ?? await searchService.SearchJobsAsync(searchQuery, cancellationToken);
+            // Cache-aside with early return on hit (review B-1): SetAsync must
+            // NOT run for cached results — it would rewrite the same value and
+            // reset the TTL on every hit.
+            var cached = await cache.GetAsync(searchQuery, cancellationToken);
+            if (cached is not null)
+            {
+                return Results.Ok(new JobSearchResponseDto(
+                    Items: cached.Items,
+                    Total: cached.Total,
+                    Page: cached.Page,
+                    Size: cached.Size,
+                    TotalPages: cached.TotalPages,
+                    Message: cached.Message));
+            }
+
+            var result = await searchService.SearchJobsAsync(searchQuery, cancellationToken);
             await cache.SetAsync(searchQuery, result, cancellationToken);
 
             var response = new JobSearchResponseDto(

@@ -28,6 +28,8 @@ public static class ElasticsearchServiceExtensions
             o.Index = esIndex;
             o.Username = configuration["ELASTICSEARCH_USERNAME"] ?? configuration["Elasticsearch:Username"];
             o.Password = configuration["ELASTICSEARCH_PASSWORD"] ?? configuration["Elasticsearch:Password"];
+            var refreshRaw = configuration["ELASTICSEARCH_REFRESH_ON_WRITE"] ?? configuration["Elasticsearch:RefreshOnWrite"];
+            o.RefreshOnWrite = !string.Equals(refreshRaw, "false", StringComparison.OrdinalIgnoreCase);
         });
 
         services.AddSingleton(sp =>
@@ -52,7 +54,7 @@ public static class ElasticsearchServiceExtensions
         {
             o.Url = configuration["REDIS_URL"] ?? configuration["Redis:Url"] ?? "";
             var ttlRaw = configuration["REDIS_TTL_SECONDS"] ?? configuration["Redis:TtlSeconds"];
-            o.TtlSeconds = int.TryParse(ttlRaw, out var ttl) && ttl > 0 ? ttl : 300;
+            o.TtlSeconds = int.TryParse(ttlRaw, out var ttl) && ttl > 0 ? ttl : SearchCacheDefaults.DefaultTtlSeconds;
         });
         services.Configure<KafkaOptions>(o =>
         {

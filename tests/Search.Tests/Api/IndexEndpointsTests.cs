@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Search.Api.DTOs;
@@ -164,5 +165,50 @@ public class IndexEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+    }
+
+    private static WebApplicationFactory<Program> WithIndexToken(
+        WebApplicationFactory<Program> factory, Mock<ISearchService> mockSearchService) =>
+        (WebApplicationFactory<Program>)factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["SEARCH_INDEX_TOKEN"] = "test-token" }));
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        });
+
+    [Fact]
+    public async Task IndexJob_WithTokenConfigured_RejectsMissingToken()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        var client = WithIndexToken(_factory, mockSearchService).CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/search/index", new JobSyncDto(
+            Id: "job-101", Title: "Fullstack Engineer", Description: "Awesome opportunity",
+            CompanyName: "Acme Corp", Location: "Ha Noi"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        mockSearchService.Verify(
+            s => s.IndexJobAsync(It.IsAny<JobDocument>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task IndexJob_WithTokenConfigured_AcceptsValidToken()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        mockSearchService
+            .Setup(s => s.IndexJobAsync(It.IsAny<JobDocument>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var client = WithIndexToken(_factory, mockSearchService).CreateClient();
+        client.DefaultRequestHeaders.Add("X-Internal-Token", "test-token");
+
+        var response = await client.PostAsJsonAsync("/api/search/index", new JobSyncDto(
+            Id: "job-101", Title: "Fullstack Engineer", Description: "Awesome opportunity",
+            CompanyName: "Acme Corp", Location: "Ha Noi"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 }

@@ -5,7 +5,6 @@ using Microsoft.Extensions.Options;
 using Search.Core.Interfaces;
 using Search.Core.Models;
 using Search.Infrastructure.Configuration;
-using Search.Infrastructure.Services;
 
 namespace Search.Infrastructure.Workers;
 
