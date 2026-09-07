@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Search.Core.Interfaces;
 using Search.Infrastructure.Configuration;
 using Search.Infrastructure.Services;
+using Search.Infrastructure.Workers;
 
 namespace Search.Infrastructure.Extensions;
 
@@ -27,6 +28,8 @@ public static class ElasticsearchServiceExtensions
             o.Index = esIndex;
             o.Username = configuration["ELASTICSEARCH_USERNAME"] ?? configuration["Elasticsearch:Username"];
             o.Password = configuration["ELASTICSEARCH_PASSWORD"] ?? configuration["Elasticsearch:Password"];
+            var refreshRaw = configuration["ELASTICSEARCH_REFRESH_ON_WRITE"] ?? configuration["Elasticsearch:RefreshOnWrite"];
+            o.RefreshOnWrite = !string.Equals(refreshRaw, "false", StringComparison.OrdinalIgnoreCase);
         });
 
         services.AddSingleton(sp =>
@@ -45,6 +48,41 @@ public static class ElasticsearchServiceExtensions
 
         services.AddSingleton<ElasticsearchInitializer>();
         services.AddSingleton<ISearchService, ElasticsearchService>();
+
+        // PBL6-19: Redis cache (5m TTL) with in-memory fallback for local/test.
+        services.Configure<RedisOptions>(o =>
+        {
+            o.Url = configuration["REDIS_URL"] ?? configuration["Redis:Url"] ?? "";
+            var ttlRaw = configuration["REDIS_TTL_SECONDS"] ?? configuration["Redis:TtlSeconds"];
+            o.TtlSeconds = int.TryParse(ttlRaw, out var ttl) && ttl > 0 ? ttl : SearchCacheDefaults.DefaultTtlSeconds;
+        });
+        services.Configure<KafkaOptions>(o =>
+        {
+            o.BootstrapServers = configuration["KAFKA_BOOTSTRAP_SERVERS"]
+                ?? configuration["Kafka:BootstrapServers"]
+                ?? configuration["KAFKA_BOOTSTRAP"] ?? "";
+            o.Topic = configuration["KAFKA_TOPIC"] ?? configuration["Kafka:Topic"] ?? "job-events";
+            o.GroupId = configuration["KAFKA_GROUP_ID"] ?? configuration["Kafka:GroupId"] ?? "search-svc";
+        });
+
+        var redisUrl = configuration["REDIS_URL"] ?? configuration["Redis:Url"];
+        if (!string.IsNullOrWhiteSpace(redisUrl))
+        {
+            services.AddStackExchangeRedisCache(o =>
+            {
+                o.Configuration = redisUrl;
+                o.InstanceName = "search:";
+            });
+        }
+        else
+        {
+            services.AddDistributedMemoryCache();
+        }
+
+        services.AddSingleton<ISearchCache, RedisSearchCache>();
+        // Singleton + hosted so the concrete consumer is resolvable in handlers/tests.
+        services.AddSingleton<JobEventsConsumer>();
+        services.AddHostedService(sp => sp.GetRequiredService<JobEventsConsumer>());
 
         return services;
     }

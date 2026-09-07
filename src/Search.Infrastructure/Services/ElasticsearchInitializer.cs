@@ -27,11 +27,23 @@ public class ElasticsearchInitializer
         var indexName = _options.Index;
         _logger.LogInformation("Checking if Elasticsearch index '{IndexName}' exists...", indexName);
 
+        // ExistsResponse has no Exists flag in client 8.13: discriminate by HTTP
+        // status. IsValidResponse alone conflates "index missing" (404, expected)
+        // with infra errors (network/auth) — the latter must fail loudly instead
+        // of attempting a create with a misleading error (review B-3).
         var existsResponse = await _client.Indices.ExistsAsync(indexName, cancellationToken);
-        if (existsResponse.IsValidResponse)
+        var existsStatus = existsResponse.ApiCallDetails?.HttpStatusCode;
+        if (existsStatus == 200)
         {
             _logger.LogInformation("Elasticsearch index '{IndexName}' already exists.", indexName);
             return;
+        }
+
+        if (existsStatus != 404)
+        {
+            throw new InvalidOperationException(
+                $"Failed to check Elasticsearch index '{indexName}': unexpected status {(int?)existsStatus}. " +
+                $"{existsResponse.DebugInformation}");
         }
 
         _logger.LogInformation("Creating Elasticsearch index '{IndexName}' with mappings...", indexName);
@@ -45,8 +57,12 @@ public class ElasticsearchInitializer
                     .Keyword(k => k.CompanyId!)
                     .Text(t => t.CompanyName, f => f.Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
                     .Text(t => t.Location, f => f.Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
-                    .LongNumber(n => n.SalaryMin!)
-                    .LongNumber(n => n.SalaryMax!)
+                    // Salaries are decimal? in C#: DoubleNumber preserves fractions.
+                    // LongNumber would silently truncate/error on values like 1500000.50 (review B-5).
+                    // NOTE: changing an existing index mapping requires recreation —
+                    // this mapping only applies when the index is created.
+                    .DoubleNumber(n => n.SalaryMin!)
+                    .DoubleNumber(n => n.SalaryMax!)
                     .Keyword(k => k.Currency)
                     .Keyword(k => k.CategoryId!)
                     .Keyword(k => k.CategoryName!)

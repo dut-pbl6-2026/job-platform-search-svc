@@ -61,7 +61,6 @@ public class ElasticsearchService : ISearchService
         // 3. Status filter (Default: Active — matches backend JobStatus enum)
         filterClauses.Add(q => q.Term(t => t.Field(f => f.Status).Value("Active")));
 
-        // 4. Category filter
         // 4. Category filter — use CategoryId (keyword) for exact match, not CategoryName (text)
         if (!string.IsNullOrWhiteSpace(query.Category))
         {
@@ -126,14 +125,14 @@ public class ElasticsearchService : ISearchService
         }
 
         var total = response.Total;
-        var items = response.Documents.ToList();
 
-        // SRS SEARCH-01-05: Handle empty results gracefully
+        // SRS SEARCH-01-05: Handle empty results gracefully (before materializing).
         if (total == 0)
         {
             return SearchResult<JobDocument>.Empty(query.NormalizedPage, query.NormalizedSize);
         }
 
+        var items = response.Documents.ToList();
         return SearchResult<JobDocument>.Create(items, total, query.NormalizedPage, query.NormalizedSize);
     }
 
@@ -154,6 +153,9 @@ public class ElasticsearchService : ISearchService
                         sh => sh.MatchPhrasePrefix(m => m.Field(f => f.Title).Query(trimmed)),
                         sh => sh.MatchPhrasePrefix(m => m.Field(f => f.CompanyName).Query(trimmed))
                     )
+                    // Required: with a Filter clause and no Must, Should would
+                    // otherwise be optional and match Active docs with no prefix hit.
+                    .MinimumShouldMatch(1)
                     .Filter(f => f.Term(t => t.Field(fld => fld.Status).Value("Active")))
                 )
             ),
@@ -174,6 +176,8 @@ public class ElasticsearchService : ISearchService
 
         return suggestions;
     }
+
+    private Refresh WriteRefresh => _options.RefreshOnWrite ? Refresh.WaitFor : Refresh.False;
 
     private static SortOptionsDescriptor<JobDocument> ApplySorting(SortOptionsDescriptor<JobDocument> sort, SearchQuery query)
     {
@@ -196,7 +200,7 @@ public class ElasticsearchService : ISearchService
 
         var response = await _client.IndexAsync(document, _options.Index, idx => idx
             .Id(document.Id)
-            .Refresh(Refresh.WaitFor),
+            .Refresh(WriteRefresh),
             cancellationToken);
 
         if (!response.IsValidResponse)
@@ -218,7 +222,7 @@ public class ElasticsearchService : ISearchService
         var response = await _client.BulkAsync(b => b
             .Index(_options.Index)
             .IndexMany(docList, (descriptor, doc) => descriptor.Id(doc.Id))
-            .Refresh(Refresh.WaitFor),
+            .Refresh(WriteRefresh),
             cancellationToken);
 
         if (!response.IsValidResponse || response.Errors)
@@ -238,7 +242,7 @@ public class ElasticsearchService : ISearchService
             throw new ArgumentException("JobId must not be empty.", nameof(jobId));
 
         var response = await _client.DeleteAsync(_options.Index, jobId, d => d
-            .Refresh(Refresh.WaitFor),
+            .Refresh(WriteRefresh),
             cancellationToken);
 
         if (!response.IsValidResponse && response.ApiCallDetails?.HttpStatusCode != 404)

@@ -50,6 +50,14 @@ app.MapSearchEndpoints();
 // Indexing endpoints (HTTP Sync)
 app.MapIndexEndpoints();
 
+// S-1: loud signal when index auth is off — with the gateway routing
+// /api/search/** publicly, an unset token leaves index writes open.
+if (string.IsNullOrWhiteSpace(app.Configuration["SEARCH_INDEX_TOKEN"] ?? app.Configuration["IndexAuth:Token"]))
+{
+    app.Logger.LogWarning(
+        "SEARCH_INDEX_TOKEN is not set. Index endpoints accept unauthenticated writes — set the token in non-dev environments.");
+}
+
 // Ensure Elasticsearch index exists on startup
 using (var scope = app.Services.CreateScope())
 {
