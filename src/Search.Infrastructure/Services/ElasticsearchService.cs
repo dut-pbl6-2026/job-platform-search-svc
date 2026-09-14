@@ -124,7 +124,13 @@ public class ElasticsearchService : ISearchService
             throw new InvalidOperationException($"Search failed: {response.ElasticsearchServerError?.Error.Reason ?? response.DebugInformation}");
         }
 
-        var total = response.Total;
+        // Elastic.Clients.Elasticsearch 8.13.0 does not populate SearchResponse.Total
+        // from the hits.total union (it reads 0 even when documents are returned).
+        // Read the true total from HitsMetadata.Total (TotalHits.Value), falling back
+        // to the page hit count so pagination stays correct.
+        var total = response.HitsMetadata?.Total is { } totalHits
+            ? totalHits.Match(t => t.Value, l => l)
+            : response.Hits.Count;
 
         // SRS SEARCH-01-05: Handle empty results gracefully (before materializing).
         if (total == 0)
