@@ -8,6 +8,7 @@ public record SearchQuery(
     string? ExperienceLevel = null,
     decimal? MinSalary = null,
     decimal? MaxSalary = null,
+    string? Skills = null,
     int Page = 0,
     int Size = 20,
     string? SortBy = null

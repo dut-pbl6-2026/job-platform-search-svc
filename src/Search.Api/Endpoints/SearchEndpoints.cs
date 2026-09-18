@@ -21,6 +21,7 @@ public static class SearchEndpoints
             [FromQuery] string? experienceLevel,
             [FromQuery] decimal? minSalary,
             [FromQuery] decimal? maxSalary,
+            [FromQuery] string? skills,
             [FromQuery] int page = 0,
             [FromQuery] int size = 20,
             [FromQuery] string? sortBy = null,
@@ -56,6 +57,7 @@ public static class SearchEndpoints
                 ExperienceLevel: experienceLevel,
                 MinSalary: minSalary,
                 MaxSalary: maxSalary,
+                Skills: skills,
                 Page: page,
                 Size: size,
                 SortBy: sortBy
