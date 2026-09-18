@@ -63,4 +63,7 @@ public class JobDocument
 
     [JsonPropertyName("benefits")]
     public string? Benefits { get; set; }
+
+    [JsonPropertyName("skills")]
+    public List<string> Skills { get; set; } = new();
 }

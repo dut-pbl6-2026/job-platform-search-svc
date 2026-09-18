@@ -49,14 +49,43 @@ public class ElasticsearchInitializer
         _logger.LogInformation("Creating Elasticsearch index '{IndexName}' with mappings...", indexName);
 
         var createResponse = await _client.Indices.CreateAsync<JobDocument>(indexName, c => c
+            .Settings(s => s
+                .Analysis(a => a
+                    // Vietnamese analyzer: icu_tokenizer + icu_folding (accent/case folding)
+                    // so typing without diacritics ("ky su") matches accented docs ("Kỹ sư").
+                    // Single folding filter — icu_folding already does NFKC + case folding,
+                    // an explicit icu_normalizer would be redundant.
+                    .Analyzers(an => an
+                        .Custom("vietnamese_icu", ca => ca
+                            .Tokenizer("icu_tokenizer")
+                            .Filter(new[] { "vietnamese_icu_fold" }))
+                    )
+                    .TokenFilters(tf => tf
+                        .IcuFolding("vietnamese_icu_fold", _ => { })
+                    )
+                    // Lowercase normalizer for the Skills keyword field: makes term/terms
+                    // matching case-insensitive (producer may send "React"/"C#" while the
+                    // query sends lowercase). ES applies it on both index and query time.
+                    .Normalizers(n => n
+                        .Custom("lowercase_normalizer", cn => cn
+                            .Filter(new[] { "lowercase" }))
+                    )
+                )
+            )
             .Mappings(m => m
                 .Properties(p => p
                     .Keyword(k => k.Id)
-                    .Text(t => t.Title, f => f.Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
-                    .Text(t => t.Description)
+                    .Text(t => t.Title, f => f
+                        .Analyzer("vietnamese_icu")
+                        .Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
+                    .Text(t => t.Description, f => f.Analyzer("vietnamese_icu"))
                     .Keyword(k => k.CompanyId!)
-                    .Text(t => t.CompanyName, f => f.Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
-                    .Text(t => t.Location, f => f.Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
+                    .Text(t => t.CompanyName, f => f
+                        .Analyzer("vietnamese_icu")
+                        .Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
+                    .Text(t => t.Location, f => f
+                        .Analyzer("vietnamese_icu")
+                        .Fields(ff => ff.Keyword(k => k.Suffix("raw"))))
                     // Salaries are decimal? in C#: DoubleNumber preserves fractions.
                     // LongNumber would silently truncate/error on values like 1500000.50 (review B-5).
                     // NOTE: changing an existing index mapping requires recreation —
@@ -73,8 +102,9 @@ public class ElasticsearchInitializer
                     .Date(d => d.CreatedAt)
                     .Date(d => d.UpdatedAt)
                     .Date(d => d.ExpiresAt!)
-                    .Text(t => t.Requirements!)
-                    .Text(t => t.Benefits!)
+                    .Text(t => t.Requirements!, f => f.Analyzer("vietnamese_icu"))
+                    .Text(t => t.Benefits!, f => f.Analyzer("vietnamese_icu"))
+                    .Keyword(k => k.Skills, k => k.Normalizer("lowercase_normalizer"))
                 )
             ), cancellationToken);
 
