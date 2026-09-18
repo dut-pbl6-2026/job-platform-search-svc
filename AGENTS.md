@@ -33,7 +33,7 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 
 ## SRS mapping (SEARCH-01)
 
-- `GET /api/search/jobs?q={keyword}&location={city}&page={0}&size={20}` — full-text search with relevance scoring, pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`.
+- `GET /api/search/jobs?q={keyword}&location={city}&minSalary={n}&maxSalary={n}&skills={s1,s2}&page={0}&size={20}` — full-text search with relevance scoring + filters (salary overlap, location, skills OR, category/employmentType/experienceLevel), pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`.
 - `GET /api/search/suggest?q={prefix}` — autocomplete suggestions (top 5-10).
 - Searchable fields: `title` (text, searchable+sortable), `description` (text, searchable), `company` (text, searchable+filterable+sortable), `location` (text, searchable+filterable+sortable), `salary_min/max` (numeric, filterable range), `category` (keyword, filterable+sortable), `employment_type` (keyword, filterable+sortable), `created_at` (date, sortable).
 - Handle empty results gracefully: 200 OK with message "No jobs found matching your criteria".
@@ -41,8 +41,9 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 ## Elasticsearch (SRS 8.3.4, 8.4, infra `docker-compose.yml:44`)
 
 - ES `8.13.2` single-node `http://localhost:9200` (`xpack.security.enabled=false`), index name `jobs` (`ELASTICSEARCH_INDEX` env var).
-- Index mapping: `title` → `text` (analyzer `standard`), `description` → `text`, `company_name` → `text + keyword`, `location` → `text + keyword`, `salary_min/max` → `long`, `category` → `keyword`, `employment_type` → `keyword`, `experience_level` → `keyword`, `status` → `keyword`, `recruiter_id` → `keyword`, `created_at/updated_at` → `date`.
-- Vietnamese text: use `standard` analyzer initially (MUST), upgrade to `icu_analyzer` + Vietnamese plugin in SHOULD phase W6.
+- Index mapping: text fields (`title`, `description`, `company_name`, `location`, `requirements`, `benefits`) use custom analyzer `vietnamese_icu` (`icu_tokenizer` + `icu_folding` — accent/case folding so typing without diacritics matches accented docs). Requires `analysis-icu` plugin in the custom ES image (`job-platform-infra/docker/es`, W6). `title`/`company_name`/`location` keep `.raw` keyword subfield for exact sort/filter.
+- `salary_min/max` → double, `category` → keyword, `employment_type` → keyword, `experience_level` → keyword, `status` → keyword, `recruiter_id` → keyword, `skills` → keyword (list, `lowercase_normalizer` so term filter is case-insensitive), `created_at/updated_at` → date.
+- **Reindex note:** changing analyzer/mapping only applies when the index is created. Bump `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) so the initializer creates a fresh index with the new mapping; then re-ingest (crawler/seed/HTTP sync). Never edit an existing index's analyzer in place.
 - `PERF-02 search p95<200ms` — keep queries efficient, avoid deep pagination (`from+size`), prefer `search_after` for large offsets.
 
 ## Events — consumer (SRS 8.5)
