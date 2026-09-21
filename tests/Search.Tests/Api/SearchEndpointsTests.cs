@@ -126,6 +126,63 @@ public class SearchEndpointsTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task SearchJobs_WithSkillsParam_PassesSkillsToQuery()
+    {
+        // Arrange
+        var mockSearchService = new Mock<ISearchService>();
+        SearchQuery? capturedQuery = null;
+
+        mockSearchService
+            .Setup(s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<SearchQuery, CancellationToken>((q, _) => capturedQuery = q)
+            .ReturnsAsync(SearchResult<JobDocument>.Empty(0, 20));
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        }).CreateClient();
+
+        // Act
+        var response = await client.GetAsync("/api/search/jobs?skills=C%23%2C%20.NET");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        capturedQuery.Should().NotBeNull();
+        capturedQuery!.Skills.Should().Be("C#, .NET");
+    }
+
+    [Fact]
+    public async Task SearchJobs_WithoutSkills_SkillsIsNull()
+    {
+        // Arrange
+        var mockSearchService = new Mock<ISearchService>();
+        SearchQuery? capturedQuery = null;
+
+        mockSearchService
+            .Setup(s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<SearchQuery, CancellationToken>((q, _) => capturedQuery = q)
+            .ReturnsAsync(SearchResult<JobDocument>.Empty(0, 20));
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        }).CreateClient();
+
+        // Act
+        await client.GetAsync("/api/search/jobs?q=dev");
+
+        // Assert
+        capturedQuery.Should().NotBeNull();
+        capturedQuery!.Skills.Should().BeNull();
+    }
+
+    [Fact]
     public async Task SuggestJobs_WithoutQuery_ReturnsBadRequest()
     {
         // Arrange

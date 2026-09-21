@@ -42,6 +42,22 @@ public class SearchQueryTests
     }
 
     [Fact]
+    public void Skills_IsNullByDefault()
+    {
+        var query = new SearchQuery();
+
+        query.Skills.Should().BeNull();
+    }
+
+    [Fact]
+    public void Skills_CanBeSet()
+    {
+        var query = new SearchQuery(Skills: "C#, .NET");
+
+        query.Skills.Should().Be("C#, .NET");
+    }
+
+    [Fact]
     public void SearchResult_Empty_ShouldReturnValidStructureWithMessage()
     {
         // Act

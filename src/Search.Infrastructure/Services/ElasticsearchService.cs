@@ -99,6 +99,21 @@ public class ElasticsearchService : ISearchService
                 { Lte = (double)query.MaxSalary.Value })));
         }
 
+        // 8. Skills filter — Terms: match any of the requested skills (OR semantics).
+        //    Field Skills is keyword with "lowercase_normalizer", so ES normalizes both
+        //    index and query values; no manual .ToLowerInvariant() needed here.
+        if (!string.IsNullOrWhiteSpace(query.Skills))
+        {
+            var skills = query.Skills.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (skills.Length > 0)
+            {
+                var values = skills.Select(s => (FieldValue)s).ToArray();
+                filterClauses.Add(q => q.Terms(t => t
+                    .Field(f => f.Skills)
+                    .Terms(new TermsQueryField(values))));
+            }
+        }
+
         var response = await _client.SearchAsync<JobDocument>(s => s
             .Index(_options.Index)
             .From(query.From)
