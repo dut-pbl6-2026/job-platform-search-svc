@@ -8,3 +8,23 @@
 ## Deploy (Render Free jp-search — TM2 Thanh)
 - Service: `jp-search` `https://jp-search.onrender.com` `5003` (ES Bonsai)
 - Hook: `RENDER_DEPLOY_HOOK_SEARCH`
+
+## Advanced Search (W6, PBL6-6)
+- Text fields (`title`, `description`, `company_name`, `location`, `requirements`, `benefits`)
+  use custom analyzer `vietnamese_icu` (`icu_tokenizer` + `icu_folding`) — typing without
+  diacritics matches accented docs. Requires the `analysis-icu` plugin in the custom ES
+  image (`job-platform-infra/docker/es`): `docker compose build elasticsearch` before `up`.
+- Filters: `q` (keyword) + `minSalary`/`maxSalary` (overlap) + `location` + `skills` (comma
+  list, OR) + `category`/`employmentType`/`experienceLevel`.
+- `skills` is a keyword list with a lowercase normalizer. The ingest DTO (`JobSyncDto`)
+  accepts it, but producers (job-svc HTTP sync / crawler) must send it — until then the
+  `skills` filter returns empty (no error).
+- **Reindex after mapping change:** analyzer/mapping only applies to a fresh index. Bump
+  `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) so the initializer creates the new
+  mapping, then re-ingest and verify:
+  ```bash
+  ELASTICSEARCH_INDEX=jobs_v2 python scripts/recreate_index.py
+  curl "$ELASTICSEARCH_URL/$ELASTICSEARCH_INDEX/_count"
+  ```
+- **Coverage gap:** no Testcontainers here (needs a Docker daemon) — ES query behavior
+  (Terms filter, normalizer, `icu_folding`) is verified manually via curl, not unit tests.
