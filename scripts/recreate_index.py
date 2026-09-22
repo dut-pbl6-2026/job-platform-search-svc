@@ -9,8 +9,9 @@ Flow (FIX #3 index versioning):
 
 Usage (both env vars required — no defaults, this script issues DELETE):
   export ELASTICSEARCH_URL=http://localhost:9200 ELASTICSEARCH_INDEX=jobs_v2
-  python scripts/recreate_index.py
-  # then re-ingest: crawler seed_loader / job-svc re-sync, then re-run this script to check _count
+  python scripts/recreate_index.py            # DELETE index, then report _count
+  # then: restart search-svc (recreate) -> re-ingest -> verify WITHOUT deleting:
+  python scripts/recreate_index.py --check     # non-destructive: only GET _count
 """
 
 import json
@@ -40,8 +41,27 @@ def req(method, path):
         return 0, ""  # 0 = unreachable (connection refused / DNS / timeout)
 
 
+CHECK_ONLY = "--check" in sys.argv[1:]
+
+
+def check_count():
+    status, body = req("GET", f"{INDEX}/_count")
+    if status == 200:
+        print(f"_count = {json.loads(body).get('count', '?')}")
+        return 0
+
+    if status == 0:
+        print(f"Index {INDEX} not reachable. Start ES + search-svc and re-run.", file=sys.stderr)
+    else:
+        print(f"Index {INDEX} not ready yet (HTTP {status}). Start search-svc and re-run.", file=sys.stderr)
+    return 1
+
+
 def main():
     print(f"Target: {ES_URL}/{INDEX}")
+
+    if CHECK_ONLY:
+        return check_count()
 
     status, _ = req("DELETE", INDEX)
     if status == 200:
@@ -57,21 +77,12 @@ def main():
         return 1
 
     print("Now (re)start search-svc so ElasticsearchInitializer recreates the index,")
-    print("then re-ingest (crawler / seed_loader / job-svc re-sync) and re-run this script.")
-    print("Waiting 5s then checking _count...")
+    print("then re-ingest (crawler / seed_loader / job-svc re-sync).")
+    print("Verify afterwards WITHOUT deleting: python scripts/recreate_index.py --check")
+    print("Waiting 5s then checking _count (expect 0/404 until re-ingested)...")
 
     time.sleep(5)
-    status, body = req("GET", f"{INDEX}/_count")
-    if status == 200:
-        count = json.loads(body).get("count", "?")
-        print(f"_count = {count}")
-        return 0
-
-    if status == 0:
-        print(f"Index {INDEX} not reachable. Start ES + search-svc and re-run.", file=sys.stderr)
-    else:
-        print(f"Index {INDEX} not ready yet (HTTP {status}). Start search-svc and re-run.", file=sys.stderr)
-    return 1
+    return check_count()
 
 
 if __name__ == "__main__":

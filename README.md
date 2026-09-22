@@ -26,7 +26,8 @@
   python scripts/recreate_index.py   # DELETEs the index (both vars required, no defaults)
   # 1. restart search-svc so ElasticsearchInitializer recreates the index with new mapping
   # 2. re-ingest: crawler / seed_loader / job-svc re-sync
-  python scripts/recreate_index.py   # re-run: reports _count to confirm re-ingest
+  # 3. verify WITHOUT deleting (re-running the script above would wipe re-ingested data):
+  python scripts/recreate_index.py --check
   curl "$ELASTICSEARCH_URL/$ELASTICSEARCH_INDEX/_count"
   ```
   Bump `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) in `envs/.env.dev.example` so the
