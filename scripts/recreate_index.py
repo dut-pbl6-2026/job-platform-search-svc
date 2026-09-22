@@ -1,15 +1,15 @@
 """Recreate the search index after a mapping/analyzer change (W6 vietnamese_icu).
 
 Flow (FIX #3 index versioning):
-  1. Read ELASTICSEARCH_URL (default http://localhost:9200) and ELASTICSEARCH_INDEX
-     (default jobs_v2 -- the NEW versioned index from the bumped env).
+  1. Read ELASTICSEARCH_URL and ELASTICSEARCH_INDEX from env (both required).
   2. DELETE the index if it exists (fresh mapping; old versioned index is disposable).
   3. Wait for search-svc startup (ElasticsearchInitializer) to recreate it, OR
      restart search-svc so the initializer runs.
   4. Report _count so you can confirm re-ingest (crawler / seed / job-svc re-sync).
 
-Usage:
-  ELASTICSEARCH_URL=http://localhost:9200 ELASTICSEARCH_INDEX=jobs_v2 python scripts/recreate_index.py
+Usage (both env vars required — no defaults, this script issues DELETE):
+  export ELASTICSEARCH_URL=http://localhost:9200 ELASTICSEARCH_INDEX=jobs_v2
+  python scripts/recreate_index.py
   # then re-ingest: crawler seed_loader / job-svc re-sync, then re-run this script to check _count
 """
 
@@ -20,8 +20,12 @@ import time
 import urllib.request
 import urllib.error
 
-ES_URL = os.environ.get("ELASTICSEARCH_URL", "http://localhost:9200").rstrip("/")
-INDEX = os.environ.get("ELASTICSEARCH_INDEX", "jobs_v2")
+ES_URL = os.environ.get("ELASTICSEARCH_URL")
+INDEX = os.environ.get("ELASTICSEARCH_INDEX")
+if not ES_URL or not INDEX:
+    print("Set ELASTICSEARCH_URL and ELASTICSEARCH_INDEX (no defaults for destructive ops).", file=sys.stderr)
+    sys.exit(2)
+ES_URL = ES_URL.rstrip("/")
 TIMEOUT = 10
 
 

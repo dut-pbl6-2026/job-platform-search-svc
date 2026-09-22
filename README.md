@@ -19,12 +19,17 @@
 - `skills` is a keyword list with a lowercase normalizer. The ingest DTO (`JobSyncDto`)
   accepts it, but producers (job-svc HTTP sync / crawler) must send it — until then the
   `skills` filter returns empty (no error).
-- **Reindex after mapping change:** analyzer/mapping only applies to a fresh index. Bump
-  `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) so the initializer creates the new
-  mapping, then re-ingest and verify:
+- **Reindex after mapping change:** analyzer/mapping only applies to a fresh index. Full
+  sequence — export env once, then reuse it for every step:
   ```bash
-  ELASTICSEARCH_INDEX=jobs_v2 python scripts/recreate_index.py
+  export ELASTICSEARCH_URL=http://localhost:9200 ELASTICSEARCH_INDEX=jobs_v2
+  python scripts/recreate_index.py   # DELETEs the index (both vars required, no defaults)
+  # 1. restart search-svc so ElasticsearchInitializer recreates the index with new mapping
+  # 2. re-ingest: crawler / seed_loader / job-svc re-sync
+  python scripts/recreate_index.py   # re-run: reports _count to confirm re-ingest
   curl "$ELASTICSEARCH_URL/$ELASTICSEARCH_INDEX/_count"
   ```
+  Bump `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) in `envs/.env.dev.example` so the
+  initializer targets the new index; the old index stays as backup until data is confirmed.
 - **Coverage gap:** no Testcontainers here (needs a Docker daemon) — ES query behavior
   (Terms filter, normalizer, `icu_folding`) is verified manually via curl, not unit tests.
