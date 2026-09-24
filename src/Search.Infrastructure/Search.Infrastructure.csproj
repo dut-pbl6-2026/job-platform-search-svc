@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Search.Core/Search.Core.csproj" />
+    <PackageReference Include="JobPlatform.SharedKernel" Version="0.2.0" />
     <PackageReference Include="Elastic.Clients.Elasticsearch" Version="8.13.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.11" />
