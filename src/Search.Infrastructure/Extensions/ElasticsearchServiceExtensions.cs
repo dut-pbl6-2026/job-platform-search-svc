@@ -6,6 +6,7 @@ using Search.Core.Interfaces;
 using Search.Infrastructure.Configuration;
 using Search.Infrastructure.Services;
 using Search.Infrastructure.Workers;
+using SharedKafkaOptions = SharedKernel.Kafka.KafkaOptions;
 
 namespace Search.Infrastructure.Extensions;
 
@@ -63,6 +64,15 @@ public static class ElasticsearchServiceExtensions
                 ?? configuration["KAFKA_BOOTSTRAP"] ?? "";
             o.Topic = configuration["KAFKA_TOPIC"] ?? configuration["Kafka:Topic"] ?? "job-events";
             o.GroupId = configuration["KAFKA_GROUP_ID"] ?? configuration["Kafka:GroupId"] ?? "search-svc";
+        });
+
+        // PBL6-34: shared transport options for KafkaConsumerService base
+        // (Topic/GroupId stay on the local options above; the base only needs bootstrap/SASL).
+        services.Configure<SharedKafkaOptions>(o =>
+        {
+            o.BootstrapServers = configuration["KAFKA_BOOTSTRAP_SERVERS"]
+                ?? configuration["Kafka:BootstrapServers"]
+                ?? configuration["KAFKA_BOOTSTRAP"] ?? "";
         });
 
         var redisUrl = configuration["REDIS_URL"] ?? configuration["Redis:Url"];
