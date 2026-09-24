@@ -23,7 +23,8 @@ public record JobSyncDto(
     DateTime? UpdatedAt = null,
     DateTime? ExpiresAt = null,
     string? Requirements = null,
-    string? Benefits = null
+    string? Benefits = null,
+    List<string>? Skills = null
 )
 {
     public JobDocument ToDocument() => new()
@@ -47,6 +48,7 @@ public record JobSyncDto(
         UpdatedAt = UpdatedAt ?? DateTime.UtcNow,
         ExpiresAt = ExpiresAt,
         Requirements = Requirements,
-        Benefits = Benefits
+        Benefits = Benefits,
+        Skills = Skills ?? new()
     };
 }

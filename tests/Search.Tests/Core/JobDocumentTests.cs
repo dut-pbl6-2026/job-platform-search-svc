@@ -16,6 +16,7 @@ public class JobDocumentTests
         doc.Currency.Should().Be("VND");
         doc.EmploymentType.Should().Be("FullTime");
         doc.Status.Should().Be("Active");
+        doc.Skills.Should().NotBeNull().And.BeEmpty();
         doc.CreatedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(2));
         doc.UpdatedAt.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(2));
     }
@@ -45,5 +46,18 @@ public class JobDocumentTests
         json.Should().Contain("\"salary_min\":20000000");
         json.Should().Contain("\"salary_max\":40000000");
         json.Should().Contain("\"category_name\":\"IT / Software\"");
+    }
+
+    [Fact]
+    public void JobDocument_Skills_ShouldSerializeWithSnakeCaseName()
+    {
+        // Arrange
+        var doc = new JobDocument { Id = "job-1", Skills = new() { "C#", "React" } };
+
+        // Act
+        var json = JsonSerializer.Serialize(doc);
+
+        // Assert
+        json.Should().Contain("\"skills\":[\"C#\",\"React\"]");
     }
 }
