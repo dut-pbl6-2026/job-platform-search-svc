@@ -49,6 +49,17 @@ public static class SearchEndpoints
                 });
             }
 
+            var from = page * size;
+            if (from > 500)
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Pagination limit exceeded",
+                    Detail = "Offset (page * size) must not exceed 500. Use a more specific query to narrow results."
+                });
+            }
+
             var searchQuery = new SearchQuery(
                 Keyword: q,
                 Location: location,
