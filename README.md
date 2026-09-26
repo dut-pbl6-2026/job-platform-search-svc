@@ -34,3 +34,46 @@
   initializer targets the new index; the old index stays as backup until data is confirmed.
 - **Coverage gap:** no Testcontainers here (needs a Docker daemon) — ES query behavior
   (Terms filter, normalizer, `icu_folding`) is verified manually via curl, not unit tests.
+
+## Performance (PERF-02)
+
+Target: `PERF-02` — p95 of `GET /api/search/jobs` < 200ms (SRS NFR). The benchmark
+measures end-to-end HTTP latency (API + Redis lookup + Elasticsearch + response
+overhead), not the raw ES round-trip.
+
+Benchmark environment: local dev — ES 8.13.2 single-node, Redis local, dotnet 10,
+docker compose; minimum benchmark dataset: 50 documents in the index.
+
+| Metric | Cold (cache miss -> ES) | Warm (cache hit) |
+|:-------|:-----------------------|:-----------------|
+| p50    | TBD                    | TBD              |
+| p95    | TBD (target < 200ms)   | TBD (target < 20ms) |
+| p99    | TBD                    | TBD              |
+
+> Replace TBD with actual values once the index has data (>= 50 docs; verify with
+> `python scripts/recreate_index.py --check`) and the commands below have been run.
+
+Primary PERF-02 measurement: cold (cache miss), `N=100`, `concurrency=1`. The warm
+run (Redis cache-hit path, target p95 < 20ms) and `concurrency=3` are secondary
+observations (cache-hit overhead, 3 concurrent users).
+
+```bash
+# Prerequisites: ES + Redis up, search-svc running (mise run run), index has >= 50 docs
+curl -s http://localhost:5003/health
+python scripts/recreate_index.py --check
+
+# Primary PERF-02 (cold cache-miss path)
+python scripts/benchmark.py --n 100
+
+# Secondary: Redis cache-hit path / 3 concurrent users
+python scripts/benchmark.py --n 100 --warm
+python scripts/benchmark.py --n 100 --concurrency 3
+
+# Remote server: SEARCH_URL env first, --url to override, localhost:5003 is dev fallback
+SEARCH_URL=http://YOUR_SERVER:5003 python scripts/benchmark.py --n 100
+```
+
+Production (Render free): latency may be higher due to shared CPU — the local
+benchmark is the PERF-02 baseline, not a production SLA. Deep pagination is
+guarded: `page * size > 500` returns 400 Bad Request (use a more specific query
+to narrow results instead).
