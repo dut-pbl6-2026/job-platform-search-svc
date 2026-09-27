@@ -47,6 +47,86 @@ public class SearchEndpointsTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task SearchJobs_WithOffsetBeyondPaginationLimit_ReturnsBadRequest()
+    {
+        // Arrange — from = 26 * 20 = 520 > 500
+        var mockSearchService = new Mock<ISearchService>();
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        }).CreateClient();
+
+        // Act
+        var response = await client.GetAsync("/api/search/jobs?q=engineer&page=26&size=20");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        mockSearchService.Verify(
+            s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SearchJobs_WithMaxAllowedOffset_ReturnsOk()
+    {
+        // Arrange — from = 25 * 20 = 500 is the boundary and must stay valid
+        var mockSearchService = new Mock<ISearchService>();
+        SearchQuery? capturedQuery = null;
+
+        mockSearchService
+            .Setup(s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<SearchQuery, CancellationToken>((q, _) => capturedQuery = q)
+            .ReturnsAsync(SearchResult<JobDocument>.Empty(25, 20));
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        }).CreateClient();
+
+        // Act
+        var response = await client.GetAsync("/api/search/jobs?q=engineer&page=25&size=20");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        mockSearchService.Verify(
+            s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        capturedQuery.Should().NotBeNull();
+        capturedQuery!.From.Should().Be(500);
+    }
+
+    [Fact]
+    public async Task SearchJobs_WithLargePageAndMaxSize_ReturnsBadRequest()
+    {
+        // Arrange — from = 6 * 100 = 600 > 500
+        var mockSearchService = new Mock<ISearchService>();
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        }).CreateClient();
+
+        // Act
+        var response = await client.GetAsync("/api/search/jobs?page=6&size=100");
+
+        // Assert
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        mockSearchService.Verify(
+            s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task SearchJobs_WithValidParams_ReturnsMatchingJobs()
     {
         // Arrange
