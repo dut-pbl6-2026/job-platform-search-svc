@@ -61,6 +61,12 @@ public class JobEventsConsumer : KafkaConsumerService
                 case JobEventTypes.Created:
                     if (TryParseEnvelope<JobCreatedEvent>(value, out var created) && created is not null)
                     {
+                        if (created.Payload.JobId == Guid.Empty)
+                        {
+                            _typedLogger.LogWarning("Kafka poison message on {Topic}: job.created with empty JobId. Skipping.", Topic);
+                            return MessageOutcome.Skip;
+                        }
+
                         var document = ToDocument(created.Payload.OccurredAt, created.Payload.JobId, created.Payload.Title, created.Payload.Description,
                             created.Payload.CompanyId, created.Payload.CompanyName, created.Payload.Location,
                             created.Payload.SalaryMin, created.Payload.SalaryMax, created.Payload.Currency,
@@ -83,6 +89,12 @@ public class JobEventsConsumer : KafkaConsumerService
                 case JobEventTypes.Updated:
                     if (TryParseEnvelope<JobUpdatedEvent>(value, out var updated) && updated is not null)
                     {
+                        if (updated.Payload.JobId == Guid.Empty)
+                        {
+                            _typedLogger.LogWarning("Kafka poison message on {Topic}: job.updated with empty JobId. Skipping.", Topic);
+                            return MessageOutcome.Skip;
+                        }
+
                         var document = ToDocument(updated.Payload.OccurredAt, updated.Payload.JobId, updated.Payload.Title, updated.Payload.Description,
                             updated.Payload.CompanyId, updated.Payload.CompanyName, updated.Payload.Location,
                             updated.Payload.SalaryMin, updated.Payload.SalaryMax, updated.Payload.Currency,
@@ -105,6 +117,12 @@ public class JobEventsConsumer : KafkaConsumerService
                 case JobEventTypes.Deleted:
                     if (TryParseEnvelope<JobDeletedEvent>(value, out var deleted) && deleted is not null)
                     {
+                        if (deleted.Payload.JobId == Guid.Empty)
+                        {
+                            _typedLogger.LogWarning("Kafka poison message on {Topic}: job.deleted with empty JobId. Skipping.", Topic);
+                            return MessageOutcome.Skip;
+                        }
+
                         var removed = await DeleteDocumentAsync(deleted.Payload.JobId.ToString(), ct);
                         return removed ? MessageOutcome.Handled : MessageOutcome.Retry;
                     }
