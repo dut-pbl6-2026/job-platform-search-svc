@@ -57,22 +57,26 @@ public static class ElasticsearchServiceExtensions
             var ttlRaw = configuration["REDIS_TTL_SECONDS"] ?? configuration["Redis:TtlSeconds"];
             o.TtlSeconds = int.TryParse(ttlRaw, out var ttl) && ttl > 0 ? ttl : SearchCacheDefaults.DefaultTtlSeconds;
         });
-        services.Configure<KafkaOptions>(o =>
-        {
-            o.BootstrapServers = configuration["KAFKA_BOOTSTRAP_SERVERS"]
-                ?? configuration["Kafka:BootstrapServers"]
-                ?? configuration["KAFKA_BOOTSTRAP"] ?? "";
-            o.Topic = configuration["KAFKA_TOPIC"] ?? configuration["Kafka:Topic"] ?? "job-events";
-            o.GroupId = configuration["KAFKA_GROUP_ID"] ?? configuration["Kafka:GroupId"] ?? "search-svc";
-        });
-
-        // PBL6-34: shared transport options for KafkaConsumerService base
-        // (Topic/GroupId stay on the local options above; the base only needs bootstrap/SASL).
+        // PBL6-34 / B-11: single source of truth for Kafka transport options.
+        // The local Search.Infrastructure.Configuration.KafkaOptions was removed;
+        // the shared SharedKernel.Kafka.KafkaOptions carries bootstrap + SASL/TLS.
+        // Topic/GroupId are consumer-specific and read from IConfiguration in
+        // JobEventsConsumer (KAFKA_TOPIC_JOB_EVENTS / KAFKA_GROUP_ID).
         services.Configure<SharedKafkaOptions>(o =>
         {
             o.BootstrapServers = configuration["KAFKA_BOOTSTRAP_SERVERS"]
                 ?? configuration["Kafka:BootstrapServers"]
                 ?? configuration["KAFKA_BOOTSTRAP"] ?? "";
+            o.SaslUsername = configuration["KAFKA_SASL_USERNAME"]
+                ?? configuration["Kafka:SaslUsername"] ?? "";
+            o.SaslPassword = configuration["KAFKA_SASL_PASSWORD"]
+                ?? configuration["Kafka:SaslPassword"] ?? "";
+            o.SecurityProtocol = configuration["KAFKA_SECURITY_PROTOCOL"]
+                ?? configuration["Kafka:SecurityProtocol"] ?? "";
+            o.SaslMechanism = configuration["KAFKA_SASL_MECHANISM"]
+                ?? configuration["Kafka:SaslMechanism"] ?? "Plain";
+            o.SslCaLocation = configuration["KAFKA_SSL_CA_LOCATION"]
+                ?? configuration["Kafka:SslCaLocation"] ?? "";
         });
 
         var redisUrl = configuration["REDIS_URL"] ?? configuration["Redis:Url"];

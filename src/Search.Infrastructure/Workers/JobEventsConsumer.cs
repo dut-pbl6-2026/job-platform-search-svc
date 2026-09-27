@@ -37,10 +37,13 @@ public class JobEventsConsumer : KafkaConsumerService
     }
 
     protected override string Topic =>
-        (_config["KAFKA_TOPIC_JOB_EVENTS"] ?? _config["Kafka:Topic"] ?? "job-events").Trim() is { } t && !string.IsNullOrWhiteSpace(t) ? t.Trim() : "job-events";
+        Resolve(_config["KAFKA_TOPIC_JOB_EVENTS"] ?? _config["KAFKA_TOPIC"] ?? _config["Kafka:Topic"], "job-events");
 
     protected override string GroupId =>
-        (_config["KAFKA_GROUP_ID"] ?? _config["Kafka:GroupId"] ?? "search-svc").Trim() is { } g && !string.IsNullOrWhiteSpace(g) ? g.Trim() : "search-svc";
+        Resolve(_config["KAFKA_GROUP_ID"] ?? _config["Kafka:GroupId"], "search-svc");
+
+    private static string Resolve(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
     protected override async Task<MessageOutcome> HandleMessageAsync(string? key, string value, CancellationToken ct)
     {
