@@ -36,11 +36,38 @@ public class JobEventsConsumer : KafkaConsumerService
         _typedLogger = logger;
     }
 
-    protected override string Topic =>
-        (_config["KAFKA_TOPIC_JOB_EVENTS"] ?? _config["Kafka:Topic"] ?? "job-events").Trim() is { } t && !string.IsNullOrWhiteSpace(t) ? t.Trim() : "job-events";
+    protected override string Topic => ResolveTopic();
 
     protected override string GroupId =>
-        (_config["KAFKA_GROUP_ID"] ?? _config["Kafka:GroupId"] ?? "search-svc").Trim() is { } g && !string.IsNullOrWhiteSpace(g) ? g.Trim() : "search-svc";
+        // Prefer service-specific KAFKA_GROUP_SEARCH so search-svc has its own
+        // consumer-group offset, independent of the global KAFKA_GROUP_ID.
+        Resolve(
+            _config["KAFKA_GROUP_SEARCH"]
+            ?? _config["KAFKA_GROUP_ID"]
+            ?? _config["Kafka:GroupId"],
+            "search-svc");
+
+    private string ResolveTopic()
+    {
+        var specific = _config["KAFKA_TOPIC_JOB_EVENTS"];
+        if (!string.IsNullOrWhiteSpace(specific))
+            return specific.Trim();
+
+        var legacy = _config["KAFKA_TOPIC"] ?? _config["Kafka:Topic"];
+        if (!string.IsNullOrWhiteSpace(legacy))
+        {
+            _typedLogger.LogWarning(
+                "KAFKA_TOPIC_JOB_EVENTS is not set; falling back to legacy KAFKA_TOPIC={Topic}. "
+                + "Set KAFKA_TOPIC_JOB_EVENTS to a service-specific value.",
+                legacy.Trim());
+            return legacy.Trim();
+        }
+
+        return "job-events";
+    }
+
+    private static string Resolve(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
     protected override async Task<MessageOutcome> HandleMessageAsync(string? key, string value, CancellationToken ct)
     {
@@ -58,6 +85,12 @@ public class JobEventsConsumer : KafkaConsumerService
                 case JobEventTypes.Created:
                     if (TryParseEnvelope<JobCreatedEvent>(value, out var created) && created is not null)
                     {
+                        if (created.Payload.JobId == Guid.Empty)
+                        {
+                            _typedLogger.LogWarning("Kafka poison message on {Topic}: job.created with empty JobId. Skipping.", Topic);
+                            return MessageOutcome.Skip;
+                        }
+
                         var document = ToDocument(created.Payload.OccurredAt, created.Payload.JobId, created.Payload.Title, created.Payload.Description,
                             created.Payload.CompanyId, created.Payload.CompanyName, created.Payload.Location,
                             created.Payload.SalaryMin, created.Payload.SalaryMax, created.Payload.Currency,
@@ -80,6 +113,12 @@ public class JobEventsConsumer : KafkaConsumerService
                 case JobEventTypes.Updated:
                     if (TryParseEnvelope<JobUpdatedEvent>(value, out var updated) && updated is not null)
                     {
+                        if (updated.Payload.JobId == Guid.Empty)
+                        {
+                            _typedLogger.LogWarning("Kafka poison message on {Topic}: job.updated with empty JobId. Skipping.", Topic);
+                            return MessageOutcome.Skip;
+                        }
+
                         var document = ToDocument(updated.Payload.OccurredAt, updated.Payload.JobId, updated.Payload.Title, updated.Payload.Description,
                             updated.Payload.CompanyId, updated.Payload.CompanyName, updated.Payload.Location,
                             updated.Payload.SalaryMin, updated.Payload.SalaryMax, updated.Payload.Currency,
@@ -102,6 +141,12 @@ public class JobEventsConsumer : KafkaConsumerService
                 case JobEventTypes.Deleted:
                     if (TryParseEnvelope<JobDeletedEvent>(value, out var deleted) && deleted is not null)
                     {
+                        if (deleted.Payload.JobId == Guid.Empty)
+                        {
+                            _typedLogger.LogWarning("Kafka poison message on {Topic}: job.deleted with empty JobId. Skipping.", Topic);
+                            return MessageOutcome.Skip;
+                        }
+
                         var removed = await DeleteDocumentAsync(deleted.Payload.JobId.ToString(), ct);
                         return removed ? MessageOutcome.Handled : MessageOutcome.Retry;
                     }
