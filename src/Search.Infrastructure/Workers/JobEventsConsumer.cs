@@ -36,11 +36,35 @@ public class JobEventsConsumer : KafkaConsumerService
         _typedLogger = logger;
     }
 
-    protected override string Topic =>
-        Resolve(_config["KAFKA_TOPIC_JOB_EVENTS"] ?? _config["KAFKA_TOPIC"] ?? _config["Kafka:Topic"], "job-events");
+    protected override string Topic => ResolveTopic();
 
     protected override string GroupId =>
-        Resolve(_config["KAFKA_GROUP_ID"] ?? _config["Kafka:GroupId"], "search-svc");
+        // Prefer service-specific KAFKA_GROUP_SEARCH so search-svc has its own
+        // consumer-group offset, independent of the global KAFKA_GROUP_ID.
+        Resolve(
+            _config["KAFKA_GROUP_SEARCH"]
+            ?? _config["KAFKA_GROUP_ID"]
+            ?? _config["Kafka:GroupId"],
+            "search-svc");
+
+    private string ResolveTopic()
+    {
+        var specific = _config["KAFKA_TOPIC_JOB_EVENTS"];
+        if (!string.IsNullOrWhiteSpace(specific))
+            return specific.Trim();
+
+        var legacy = _config["KAFKA_TOPIC"] ?? _config["Kafka:Topic"];
+        if (!string.IsNullOrWhiteSpace(legacy))
+        {
+            _typedLogger.LogWarning(
+                "KAFKA_TOPIC_JOB_EVENTS is not set; falling back to legacy KAFKA_TOPIC={Topic}. "
+                + "Set KAFKA_TOPIC_JOB_EVENTS to a service-specific value.",
+                legacy.Trim());
+            return legacy.Trim();
+        }
+
+        return "job-events";
+    }
 
     private static string Resolve(string? value, string fallback) =>
         string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
