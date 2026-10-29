@@ -91,6 +91,15 @@ public class JobEventsConsumer : KafkaConsumerService
                             return MessageOutcome.Skip;
                         }
 
+                        // feat(admin): Pending/Rejected jobs exist in job-svc but must never be
+                        // searchable. Remove instead of index so a re-created id cannot leak
+                        // (delete is idempotent — ES 404 counts as success).
+                        if (IsHiddenFromSearch(created.Payload.Status))
+                        {
+                            return await RemoveFromIndexAsync(
+                                created.Payload.JobId, created.Payload.Status, ct);
+                        }
+
                         var document = ToDocument(created.Payload.OccurredAt, created.Payload.JobId, created.Payload.Title, created.Payload.Description,
                             created.Payload.CompanyId, created.Payload.CompanyName, created.Payload.Location,
                             created.Payload.SalaryMin, created.Payload.SalaryMax, created.Payload.Currency,
@@ -117,6 +126,14 @@ public class JobEventsConsumer : KafkaConsumerService
                         {
                             _typedLogger.LogWarning("Kafka poison message on {Topic}: job.updated with empty JobId. Skipping.", Topic);
                             return MessageOutcome.Skip;
+                        }
+
+                        // feat(admin): status changes away from Active (admin reject, close,
+                        // delete) only need the document removed. Staying Active re-indexes.
+                        if (IsHiddenFromSearch(updated.Payload.Status))
+                        {
+                            return await RemoveFromIndexAsync(
+                                updated.Payload.JobId, updated.Payload.Status, ct);
                         }
 
                         var document = ToDocument(updated.Payload.OccurredAt, updated.Payload.JobId, updated.Payload.Title, updated.Payload.Description,
@@ -210,6 +227,37 @@ public class JobEventsConsumer : KafkaConsumerService
         }
 
         return ok;
+    }
+
+    /// <summary>
+    /// Job statuses that must not appear in the public search index (feat(admin) Slice 5).
+    /// Only <c>Active</c> jobs are searchable; Pending/Rejected are admin-only states and
+    /// Closed/Deleted jobs are no longer publicly listable.
+    /// </summary>
+    private static readonly string[] HiddenFromSearchStatuses =
+        ["Pending", "Rejected", "Closed", "Deleted"];
+
+    private static bool IsHiddenFromSearch(string? status) =>
+        !string.IsNullOrWhiteSpace(status)
+        && Array.Exists(
+            HiddenFromSearchStatuses,
+            hidden => string.Equals(hidden, status.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private async Task<MessageOutcome> RemoveFromIndexAsync(Guid jobId, string? status, CancellationToken ct)
+    {
+        var removed = await DeleteDocumentAsync(jobId.ToString(), ct);
+        if (!removed)
+        {
+            _typedLogger.LogWarning(
+                "Failed to remove job {JobId} (status {Status}) from the search index. Will retry.",
+                jobId, status);
+            return MessageOutcome.Retry;
+        }
+
+        _typedLogger.LogInformation(
+            "Job {JobId} has non-searchable status {Status}; removed from the search index.",
+            jobId, status);
+        return MessageOutcome.Handled;
     }
 
     private static JobDocument ToDocument(
