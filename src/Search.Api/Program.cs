@@ -1,19 +1,17 @@
 using Search.Api.Endpoints;
+using Search.Api.Health;
+using Search.Api.Observability;
 using Search.Infrastructure.Extensions;
 using Search.Infrastructure.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// MAINT-06: structured JSON logging (ILogger JSON format ERROR/WARN/INFO/DEBUG)
-builder.Logging.ClearProviders();
-builder.Logging.AddJsonConsole(o =>
-{
-    o.IncludeScopes = true;
-    o.TimestampFormat = "yyyy-MM-ddTHH:mm:ssZ";
-});
+// MAINT-06: Serilog structured logging + correlation id (PBL6-49)
+builder.AddObservability();
 
 // Elasticsearch Client & Initializer Registration (Zero hardcoding rule)
 builder.Services.AddElasticsearchInfrastructure(builder.Configuration);
+builder.Services.AddSearchHealthChecks();
 
 // REL-07: ProblemDetails for RFC 7807 error responses
 builder.Services.AddProblemDetails();
@@ -27,6 +25,8 @@ builder.Services.AddSwaggerGen(o =>
 
 var app = builder.Build();
 
+app.UseObservability();
+
 // REL-07: UseExceptionHandler maps unhandled exceptions -> ProblemDetails JSON
 app.UseExceptionHandler();
 
@@ -37,9 +37,7 @@ if (app.Environment.IsDevelopment())
 }
 
 // REL-06: Health check endpoint per service (6-nfr.md:REL-06, 8-system-architecture.md)
-app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "search" }))
-   .WithTags("Health")
-   .ExcludeFromDescription();
+app.MapSearchHealth();
 
 app.MapGet("/", () => Results.Ok(new { service = "search", version = "0.1.0" }))
    .ExcludeFromDescription();
