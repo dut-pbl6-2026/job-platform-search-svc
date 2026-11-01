@@ -1,6 +1,7 @@
 using Search.Api.Endpoints;
 using Search.Infrastructure.Extensions;
 using Search.Infrastructure.Services;
+using OpenTelemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +17,16 @@ builder.Logging.AddJsonConsole(o =>
 builder.Services.AddElasticsearchInfrastructure(builder.Configuration);
 
 // REL-07: ProblemDetails for RFC 7807 error responses
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddPrometheusExporter();
+    });
+
 builder.Services.AddProblemDetails();
 
 // MAINT-03: OpenAPI 3.0
@@ -36,6 +47,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.MapPrometheusScrapingEndpoint();
 // REL-06: Health check endpoint per service (6-nfr.md:REL-06, 8-system-architecture.md)
 app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "search" }))
    .WithTags("Health")
