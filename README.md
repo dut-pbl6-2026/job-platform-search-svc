@@ -5,10 +5,6 @@
 - Jira PBL6 skid.atlassian.net, Master plan docs/master-plan.md
 - TM: TM1 Hoai, TM2 Thanh, TM3 Chi Bao, TM4 Khoa
 
-## Deploy (Render Free jp-search — TM2 Thanh)
-- Service: `jp-search` `https://jp-search.onrender.com` `5003` (ES Bonsai)
-- Hook: `RENDER_DEPLOY_HOOK_SEARCH`
-
 ## Advanced Search (W6, PBL6-6)
 - Text fields (`title`, `description`, `company_name`, `location`, `requirements`, `benefits`)
   use custom analyzer `vietnamese_icu` (`icu_tokenizer` + `icu_folding`) — typing without
@@ -73,7 +69,7 @@ python scripts/benchmark.py --n 100 --concurrency 3
 SEARCH_URL=http://YOUR_SERVER:5003 python scripts/benchmark.py --n 100
 ```
 
-Production (Render free): latency may be higher due to shared CPU — the local
+Latency on shared CPU may be higher — the local
 benchmark is the PERF-02 baseline, not a production SLA. Deep pagination is
 guarded: `page * size > 500` returns 400 Bad Request (use a more specific query
 to narrow results instead).
