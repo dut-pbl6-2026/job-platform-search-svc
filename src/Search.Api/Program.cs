@@ -1,6 +1,7 @@
 using Search.Api.Endpoints;
 using Search.Infrastructure.Extensions;
 using Search.Infrastructure.Services;
+using OpenTelemetry.Metrics;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +15,17 @@ builder.Logging.AddJsonConsole(o =>
 
 // Elasticsearch Client & Initializer Registration (Zero hardcoding rule)
 builder.Services.AddElasticsearchInfrastructure(builder.Configuration);
+
+// Monitoring: expose OpenTelemetry metrics on /metrics (Prometheus scrape target).
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddPrometheusExporter();
+    });
 
 // REL-07: ProblemDetails for RFC 7807 error responses
 builder.Services.AddProblemDetails();
@@ -34,6 +46,13 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+}
+
+// Monitoring: /metrics is meant for the internal scrape network; keep it off in
+// Production unless METRICS_ENABLED=true (all services are publicly reachable).
+if (app.Configuration.GetValue("METRICS_ENABLED", !app.Environment.IsProduction()))
+{
+    app.MapPrometheusScrapingEndpoint();
 }
 
 // REL-06: Health check endpoint per service (6-nfr.md:REL-06, 8-system-architecture.md)
