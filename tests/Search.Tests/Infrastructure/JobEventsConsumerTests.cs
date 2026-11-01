@@ -62,6 +62,78 @@ public class JobEventsConsumerTests
         search.LastIndexed.Title.Should().Be("Senior .NET Dev v2");
     }
 
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Rejected")]
+    [InlineData("Closed")]
+    [InlineData("Deleted")]
+    [InlineData("pending")]
+    public async Task HandleMessageAsync_JobUpdated_NonSearchableStatus_RemovesDocument(string status)
+    {
+        var jobId = Guid.NewGuid();
+        var (consumer, search, cache) = BuildConsumer();
+        var payload = CreatedPayload(jobId) with { Status = status };
+
+        var outcome = await consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobUpdatedEvent>.Create(JobEventTypes.Updated, ToUpdated(payload))));
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.LastDeleted.Should().Be(jobId.ToString());
+        search.LastIndexed.Should().BeNull();
+        cache.LastInvalidated.Should().Be(jobId.ToString());
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_JobCreated_PendingStatus_IsNotIndexed()
+    {
+        var jobId = Guid.NewGuid();
+        var (consumer, search, cache) = BuildConsumer();
+        var payload = CreatedPayload(jobId) with { Status = "Pending" };
+
+        var outcome = await consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobCreatedEvent>.Create(JobEventTypes.Created, payload)));
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.LastIndexed.Should().BeNull();
+        search.LastDeleted.Should().Be(jobId.ToString());
+        cache.LastInvalidated.Should().Be(jobId.ToString());
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_JobUpdated_NonSearchableStatus_DeleteFailure_ReturnsRetry()
+    {
+        var jobId = Guid.NewGuid();
+        var (consumer, search, cache) = BuildConsumer();
+        search.DeleteResult = false;
+        var payload = CreatedPayload(jobId) with { Status = "Rejected" };
+
+        var outcome = await consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobUpdatedEvent>.Create(JobEventTypes.Updated, ToUpdated(payload))));
+
+        outcome.Should().Be(MessageOutcome.Retry);
+        search.LastIndexed.Should().BeNull();
+        cache.LastInvalidated.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_JobUpdated_ActiveStatus_StillIndexes()
+    {
+        var jobId = Guid.NewGuid();
+        var (consumer, search, _) = BuildConsumer();
+        var payload = CreatedPayload(jobId) with { Status = "Active" };
+
+        var outcome = await consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobUpdatedEvent>.Create(JobEventTypes.Updated, ToUpdated(payload))));
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.LastIndexed.Should().NotBeNull();
+        search.LastDeleted.Should().BeNull();
+    }
+
     [Fact]
     public async Task HandleMessageAsync_JobDeleted_DeletesDocumentAndInvalidatesCache()
     {
