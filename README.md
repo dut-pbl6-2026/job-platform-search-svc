@@ -77,3 +77,10 @@ Production (Render free): latency may be higher due to shared CPU — the local
 benchmark is the PERF-02 baseline, not a production SLA. Deep pagination is
 guarded: `page * size > 500` returns 400 Bad Request (use a more specific query
 to narrow results instead).
+
+## Health, logging and code quality
+
+- `GET /health` — cheap liveness, always `{"status":"ok","service":"search"}`.
+- `GET /health/ready` — readiness: Elasticsearch ping (3s timeout; `503` when down) and Redis probe (only when `REDIS_URL` is set; down = `degraded`, cache is bypassed).
+- Logging via Serilog: compact JSON console in non-Development, request logging, `ServiceName` enricher, `X-Correlation-Id` (generated if absent, echoed in the response). Secrets and `Authorization` headers are never logged.
+- CI runs restore, format check, build with `--warnaserror` and tests. SonarCloud (optional): job `sonarcloud` analyses `dut-pbl6-2026_job-platform-search-svc` only when the `SONAR_TOKEN` repo secret exists; otherwise it skips.
