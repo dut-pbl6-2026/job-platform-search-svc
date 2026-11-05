@@ -68,18 +68,25 @@ public class ElasticsearchService : ISearchService
             filterClauses.Add(q => q.Term(t => t.Field(f => f.CategoryId!).Value(cat)));
         }
 
-        // 5. Employment Type filter
-        if (!string.IsNullOrWhiteSpace(query.EmploymentType))
+        // 5. Employment Type filter — CSV "FullTime,PartTime" means any of them (OR),
+        //    same semantics as the skills filter (api-conventions §4).
+        var employmentTypes = query.EmploymentTypes;
+        if (employmentTypes.Count > 0)
         {
-            var empType = query.EmploymentType.Trim();
-            filterClauses.Add(q => q.Term(t => t.Field(f => f.EmploymentType).Value(empType)));
+            var values = employmentTypes.Select(v => (FieldValue)v).ToArray();
+            filterClauses.Add(q => q.Terms(t => t
+                .Field(f => f.EmploymentType)
+                .Terms(new TermsQueryField(values))));
         }
 
-        // 6. Experience Level filter
-        if (!string.IsNullOrWhiteSpace(query.ExperienceLevel))
+        // 6. Experience Level filter — CSV, OR semantics.
+        var experienceLevels = query.ExperienceLevels;
+        if (experienceLevels.Count > 0)
         {
-            var expLevel = query.ExperienceLevel.Trim();
-            filterClauses.Add(q => q.Term(t => t.Field(f => f.ExperienceLevel!).Value(expLevel)));
+            var values = experienceLevels.Select(v => (FieldValue)v).ToArray();
+            filterClauses.Add(q => q.Terms(t => t
+                .Field(f => f.ExperienceLevel!)
+                .Terms(new TermsQueryField(values))));
         }
 
         // 7. Salary range filter (SRS 3.4.4)
@@ -99,13 +106,21 @@ public class ElasticsearchService : ISearchService
                 { Lte = (double)query.MaxSalary.Value })));
         }
 
-        // 8. Skills filter — Terms: match any of the requested skills (OR semantics).
+        // 8. Skills filter — skillOp=or (default): Terms, any requested skill matches.
+        //    skillOp=and: one Term filter per skill, the job must have all of them.
         //    Field Skills is keyword with "lowercase_normalizer", so ES normalizes both
         //    index and query values; no manual .ToLowerInvariant() needed here.
-        if (!string.IsNullOrWhiteSpace(query.Skills))
+        var skills = query.SkillList;
+        if (skills.Count > 0)
         {
-            var skills = query.Skills.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (skills.Length > 0)
+            if (query.MatchAllSkills)
+            {
+                foreach (var skill in skills)
+                {
+                    filterClauses.Add(q => q.Term(t => t.Field(f => f.Skills).Value(skill)));
+                }
+            }
+            else
             {
                 var values = skills.Select(s => (FieldValue)s).ToArray();
                 filterClauses.Add(q => q.Terms(t => t

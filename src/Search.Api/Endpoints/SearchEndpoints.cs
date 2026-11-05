@@ -22,6 +22,7 @@ public static class SearchEndpoints
             [FromQuery] decimal? minSalary,
             [FromQuery] decimal? maxSalary,
             [FromQuery] string? skills,
+            [FromQuery] string? skillOp,
             [FromQuery] int page = 0,
             [FromQuery] int size = 20,
             [FromQuery] string? sortBy = null,
@@ -49,6 +50,16 @@ public static class SearchEndpoints
                 });
             }
 
+            if (!SearchQuery.IsValidSkillOp(skillOp))
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Invalid skillOp",
+                    Detail = "skillOp must be 'and' or 'or' (default 'or')."
+                });
+            }
+
             var from = page * size;
             if (from > 500)
             {
@@ -71,7 +82,8 @@ public static class SearchEndpoints
                 Skills: skills,
                 Page: page,
                 Size: size,
-                SortBy: sortBy
+                SortBy: sortBy,
+                SkillOp: skillOp
             );
 
             // Cache-aside with early return on hit (review B-1): SetAsync must
