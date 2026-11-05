@@ -105,7 +105,8 @@ public class JobEventsConsumer : KafkaConsumerService
                             created.Payload.SalaryMin, created.Payload.SalaryMax, created.Payload.Currency,
                             created.Payload.CategoryId, created.Payload.CategoryName, created.Payload.EmploymentType,
                             created.Payload.ExperienceLevel, created.Payload.RecruiterId, created.Payload.Requirements,
-                            created.Payload.Benefits, created.Payload.Status);
+                            created.Payload.Benefits, created.Payload.Status, created.Payload.CreatedAt);
+                        document = await KeepStableFieldsAsync(document, created.Payload.CreatedAt.HasValue, ct);
 
                         if (string.IsNullOrWhiteSpace(key) || key.Trim() != document.Id)
                         {
@@ -141,7 +142,8 @@ public class JobEventsConsumer : KafkaConsumerService
                             updated.Payload.SalaryMin, updated.Payload.SalaryMax, updated.Payload.Currency,
                             updated.Payload.CategoryId, updated.Payload.CategoryName, updated.Payload.EmploymentType,
                             updated.Payload.ExperienceLevel, updated.Payload.RecruiterId, updated.Payload.Requirements,
-                            updated.Payload.Benefits, updated.Payload.Status);
+                            updated.Payload.Benefits, updated.Payload.Status, updated.Payload.CreatedAt);
+                        document = await KeepStableFieldsAsync(document, updated.Payload.CreatedAt.HasValue, ct);
 
                         if (string.IsNullOrWhiteSpace(key) || key.Trim() != document.Id)
                         {
@@ -199,6 +201,19 @@ public class JobEventsConsumer : KafkaConsumerService
         var cache = scope.ServiceProvider.GetRequiredService<ISearchCache>();
         await search.DeleteJobAsync(jobId, ct);
         await cache.InvalidateJobAsync(jobId, ct);
+    }
+
+    /// <summary>
+    /// Events replace the whole ES document but never carry skills, and producers older than
+    /// SharedKernel 0.3.0 do not send CreatedAt: keep those from the indexed version (review #15).
+    /// An ES read failure throws, so the message is retried instead of losing the fields.
+    /// </summary>
+    private async Task<JobDocument> KeepStableFieldsAsync(JobDocument document, bool createdAtKnown, CancellationToken ct)
+    {
+        using var scope = _services.CreateScope();
+        var search = scope.ServiceProvider.GetRequiredService<ISearchService>();
+        var existing = await search.GetJobAsync(document.Id, ct);
+        return JobDocumentMerge.KeepStableFields(document, existing, createdAtKnown, skillsKnown: false);
     }
 
     private async Task<bool> IndexDocumentAsync(JobDocument document, CancellationToken ct)
@@ -266,7 +281,7 @@ public class JobEventsConsumer : KafkaConsumerService
         decimal? salaryMin, decimal? salaryMax, string currency,
         Guid? categoryId, string? categoryName, string employmentType,
         string experienceLevel, Guid recruiterId, string? requirements,
-        string? benefits, string status) => new()
+        string? benefits, string status, DateTime? createdAt) => new()
         {
             Id = jobId.ToString(),
             Title = title,
@@ -286,7 +301,9 @@ public class JobEventsConsumer : KafkaConsumerService
             Requirements = requirements,
             Benefits = benefits,
             UpdatedAt = occurredAt == default ? DateTime.UtcNow : occurredAt,
-            CreatedAt = occurredAt == default ? DateTime.UtcNow : occurredAt,
+            // CreatedAt is the job's original creation time (SharedKernel 0.3.0+); OccurredAt is
+            // only this change. Fall back to OccurredAt for a brand-new job from an older producer.
+            CreatedAt = createdAt ?? (occurredAt == default ? DateTime.UtcNow : occurredAt),
         };
 
     private static string? TryGetEventType(string json)

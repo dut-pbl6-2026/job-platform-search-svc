@@ -70,6 +70,56 @@ public class IndexEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
     }
 
     [Fact]
+    public async Task IndexJob_WithoutCreatedAtOrSkills_KeepsIndexedValues()
+    {
+        var originalCreatedAt = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        JobDocument? indexed = null;
+        var mockSearchService = new Mock<ISearchService>();
+        mockSearchService
+            .Setup(s => s.GetJobAsync("job-101", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JobDocument { Id = "job-101", CreatedAt = originalCreatedAt, Skills = new List<string> { "React" } });
+        mockSearchService
+            .Setup(s => s.IndexJobAsync(It.IsAny<JobDocument>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDocument, CancellationToken>((d, _) => indexed = d)
+            .ReturnsAsync(true);
+        var client = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddSingleton(mockSearchService.Object))).CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/search/index", new JobSyncDto(
+            Id: "job-101", Title: "Fullstack Engineer", Description: "Edited",
+            CompanyName: "Acme Corp", Location: "Ha Noi"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        indexed.Should().NotBeNull();
+        indexed!.CreatedAt.Should().Be(originalCreatedAt);
+        indexed.Skills.Should().Equal("React");
+    }
+
+    [Fact]
+    public async Task IndexJob_WithCreatedAt_UsesPayloadValue()
+    {
+        var createdAt = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+        JobDocument? indexed = null;
+        var mockSearchService = new Mock<ISearchService>();
+        mockSearchService
+            .Setup(s => s.GetJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JobDocument { Id = "job-102", CreatedAt = createdAt.AddDays(-9) });
+        mockSearchService
+            .Setup(s => s.IndexJobAsync(It.IsAny<JobDocument>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDocument, CancellationToken>((d, _) => indexed = d)
+            .ReturnsAsync(true);
+        var client = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddSingleton(mockSearchService.Object))).CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/search/index", new JobSyncDto(
+            Id: "job-102", Title: "Backend", Description: "New",
+            CompanyName: "Acme Corp", Location: "Ha Noi", CreatedAt: createdAt));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        indexed!.CreatedAt.Should().Be(createdAt);
+    }
+
+    [Fact]
     public async Task BulkIndexJobs_WithEmptyList_ReturnsBadRequest()
     {
         // Arrange

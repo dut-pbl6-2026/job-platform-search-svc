@@ -214,6 +214,23 @@ public class ElasticsearchService : ISearchService
         };
     }
 
+    public virtual async Task<JobDocument?> GetJobAsync(string jobId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(jobId))
+            return null;
+
+        var response = await _client.GetAsync<JobDocument>(_options.Index, jobId, cancellationToken);
+        if (response.Found)
+            return response.Source;
+
+        // Missing document (or index not created yet) is a normal "no previous version".
+        if (response.IsValidResponse || response.ApiCallDetails?.HttpStatusCode == 404)
+            return null;
+
+        _logger.LogError("Failed to read job '{JobId}': {DebugInfo}", jobId, response.DebugInformation);
+        throw new InvalidOperationException($"Failed to read job '{jobId}' from the search index.");
+    }
+
     public virtual async Task<bool> IndexJobAsync(JobDocument document, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(document.Id))
