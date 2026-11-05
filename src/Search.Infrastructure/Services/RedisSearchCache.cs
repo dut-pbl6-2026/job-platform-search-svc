@@ -128,16 +128,22 @@ public class RedisSearchCache : ISearchCache
             query.Keyword?.Trim().ToLowerInvariant() ?? "",
             query.Location?.Trim().ToLowerInvariant() ?? "",
             query.Category?.Trim().ToLowerInvariant() ?? "",
-            query.EmploymentType?.Trim().ToLowerInvariant() ?? "",
-            query.ExperienceLevel?.Trim().ToLowerInvariant() ?? "",
+            NormalizeCsv(query.EmploymentTypes),
+            NormalizeCsv(query.ExperienceLevels),
             query.MinSalary?.ToString() ?? "",
             query.MaxSalary?.ToString() ?? "",
+            NormalizeCsv(query.SkillList),
+            query.MatchAllSkills ? SearchQuery.SkillOpAnd : SearchQuery.SkillOpOr,
             query.NormalizedPage.ToString(),
             query.NormalizedSize.ToString(),
             query.SortBy?.Trim().ToLowerInvariant() ?? "");
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
         return hash;
     }
+
+    // Multi-value filters are order- and case-insensitive ("PartTime, FullTime" == "fulltime,parttime").
+    private static string NormalizeCsv(IReadOnlyList<string> values) =>
+        string.Join(',', values.Select(v => v.ToLowerInvariant()).Order(StringComparer.Ordinal));
 
     /// <summary>Legacy key builder kept for tests: hash portion of the cache key.</summary>
     public static string BuildKey(SearchQuery query) => BuildKeyHash(query);

@@ -38,6 +38,34 @@ public class SearchCacheTests
     }
 
     [Fact]
+    public void BuildKey_DifferentSkills_ShouldReturnDifferentKey()
+    {
+        var q1 = new SearchQuery(Keyword: "dev", Skills: "C#");
+        var q2 = new SearchQuery(Keyword: "dev", Skills: "Java");
+
+        RedisSearchCache.BuildKey(q1).Should().NotBe(RedisSearchCache.BuildKey(q2));
+    }
+
+    [Fact]
+    public void BuildKey_DifferentSkillOp_ShouldReturnDifferentKey()
+    {
+        var or = new SearchQuery(Skills: "C#,React");
+        var and = new SearchQuery(Skills: "C#,React", SkillOp: "and");
+
+        RedisSearchCache.BuildKey(or).Should().NotBe(RedisSearchCache.BuildKey(and));
+        RedisSearchCache.BuildKey(or).Should().Be(RedisSearchCache.BuildKey(or with { SkillOp = "or" }));
+    }
+
+    [Fact]
+    public void BuildKey_MultiValueFilters_IgnoreOrderAndCase()
+    {
+        var q1 = new SearchQuery(EmploymentType: "FullTime,PartTime", Skills: "React, C#");
+        var q2 = new SearchQuery(EmploymentType: " parttime , FULLTIME", Skills: "c#,react");
+
+        RedisSearchCache.BuildKey(q1).Should().Be(RedisSearchCache.BuildKey(q2));
+    }
+
+    [Fact]
     public async Task SetAndGet_Roundtrip_ShouldReturnCachedResult()
     {
         var cache = CreateCache();

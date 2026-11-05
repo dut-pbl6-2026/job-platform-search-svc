@@ -33,7 +33,7 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 
 ## SRS mapping (SEARCH-01)
 
-- `GET /api/search/jobs?q={keyword}&location={city}&minSalary={n}&maxSalary={n}&skills={s1,s2}&page={0}&size={20}` — full-text search with relevance scoring + filters (salary overlap, location, skills OR, category/employmentType/experienceLevel), pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`.
+- `GET /api/search/jobs?q={keyword}&location={city}&minSalary={n}&maxSalary={n}&skills={s1,s2}&skillOp={or|and}&page={0}&size={20}` — full-text search with relevance scoring + filters (salary overlap, location, skills `skillOp=or` default / `and`, category, CSV multi-value employmentType/experienceLevel = OR), pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`.
 - `GET /api/search/suggest?q={prefix}` — autocomplete suggestions (top 5-10).
 - Searchable fields: `title` (text, searchable+sortable), `description` (text, searchable), `company` (text, searchable+filterable+sortable), `location` (text, searchable+filterable+sortable), `salary_min/max` (numeric, filterable range), `category` (keyword, filterable+sortable), `employment_type` (keyword, filterable+sortable), `created_at` (date, sortable).
 - Handle empty results gracefully: 200 OK with message "No jobs found matching your criteria".

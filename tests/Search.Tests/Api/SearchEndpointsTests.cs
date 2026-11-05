@@ -235,6 +235,46 @@ public class SearchEndpointsTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task SearchJobs_WithSkillOpAndMultiValueFilters_PassesThemToQuery()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        SearchQuery? capturedQuery = null;
+
+        mockSearchService
+            .Setup(s => s.SearchJobsAsync(It.IsAny<SearchQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<SearchQuery, CancellationToken>((q, _) => capturedQuery = q)
+            .ReturnsAsync(SearchResult<JobDocument>.Empty(0, 20));
+
+        var client = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddSingleton(mockSearchService.Object);
+            });
+        }).CreateClient();
+
+        var response = await client.GetAsync(
+            "/api/search/jobs?skills=C%23,React&skillOp=and&employmentType=FullTime,PartTime&experienceLevel=Mid,Senior");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        capturedQuery.Should().NotBeNull();
+        capturedQuery!.MatchAllSkills.Should().BeTrue();
+        capturedQuery.SkillList.Should().Equal("C#", "React");
+        capturedQuery.EmploymentTypes.Should().Equal("FullTime", "PartTime");
+        capturedQuery.ExperienceLevels.Should().Equal("Mid", "Senior");
+    }
+
+    [Fact]
+    public async Task SearchJobs_InvalidSkillOp_Returns400()
+    {
+        var client = _factory.CreateClient();
+
+        var response = await client.GetAsync("/api/search/jobs?skills=C%23&skillOp=xor");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
     public async Task SearchJobs_WithoutSkills_SkillsIsNull()
     {
         // Arrange

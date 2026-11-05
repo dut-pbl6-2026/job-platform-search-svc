@@ -57,6 +57,50 @@ public class SearchQueryTests
         query.Skills.Should().Be("C#, .NET");
     }
 
+    [Theory]
+    [InlineData(null, new string[0])]
+    [InlineData("", new string[0])]
+    [InlineData("FullTime", new[] { "FullTime" })]
+    [InlineData("FullTime,PartTime", new[] { "FullTime", "PartTime" })]
+    [InlineData(" FullTime , ,PartTime,fulltime ", new[] { "FullTime", "PartTime" })]
+    public void SplitCsv_TrimsDropsEmptiesAndDuplicates(string? input, string[] expected)
+    {
+        SearchQuery.SplitCsv(input).Should().Equal(expected);
+    }
+
+    [Fact]
+    public void MultiValueFilters_AreSplitFromCsv()
+    {
+        var query = new SearchQuery(EmploymentType: "FullTime,PartTime", ExperienceLevel: "Mid, Senior", Skills: "C#, React");
+
+        query.EmploymentTypes.Should().Equal("FullTime", "PartTime");
+        query.ExperienceLevels.Should().Equal("Mid", "Senior");
+        query.SkillList.Should().Equal("C#", "React");
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("or", false)]
+    [InlineData("OR", false)]
+    [InlineData("and", true)]
+    [InlineData(" AND ", true)]
+    public void MatchAllSkills_OnlyForAnd_DefaultIsOr(string? skillOp, bool expected)
+    {
+        new SearchQuery(SkillOp: skillOp).MatchAllSkills.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("and", true)]
+    [InlineData("Or", true)]
+    [InlineData("xor", false)]
+    [InlineData("all", false)]
+    public void IsValidSkillOp_AcceptsOnlyAndOr(string? skillOp, bool expected)
+    {
+        SearchQuery.IsValidSkillOp(skillOp).Should().Be(expected);
+    }
+
     [Fact]
     public void SearchResult_Empty_ShouldReturnValidStructureWithMessage()
     {
