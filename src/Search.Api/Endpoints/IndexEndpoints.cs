@@ -63,7 +63,7 @@ public static class IndexEndpoints
             }
 
             // job-svc's HTTP fallback replaces the whole document: keep the original created_at
-            // and skills when the payload does not carry them (review #15).
+            // and skills when the payload does not carry them.
             var createdAtKnown = dto.CreatedAt.HasValue;
             var skillsKnown = dto.Skills is not null;
             var existing = createdAtKnown && skillsKnown

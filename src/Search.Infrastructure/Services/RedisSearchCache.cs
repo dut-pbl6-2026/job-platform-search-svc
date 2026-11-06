@@ -128,11 +128,11 @@ public class RedisSearchCache : ISearchCache
             query.Keyword?.Trim().ToLowerInvariant() ?? "",
             query.Location?.Trim().ToLowerInvariant() ?? "",
             query.Category?.Trim().ToLowerInvariant() ?? "",
-            NormalizeCsv(query.EmploymentTypes),
-            NormalizeCsv(query.ExperienceLevels),
+            NormalizeCsv(query.EmploymentTypes, ignoreCase: false),
+            NormalizeCsv(query.ExperienceLevels, ignoreCase: false),
             query.MinSalary?.ToString() ?? "",
             query.MaxSalary?.ToString() ?? "",
-            NormalizeCsv(query.SkillList),
+            NormalizeCsv(query.SkillList, ignoreCase: true),
             query.MatchAllSkills ? SearchQuery.SkillOpAnd : SearchQuery.SkillOpOr,
             query.NormalizedPage.ToString(),
             query.NormalizedSize.ToString(),
@@ -141,9 +141,12 @@ public class RedisSearchCache : ISearchCache
         return hash;
     }
 
-    // Multi-value filters are order- and case-insensitive ("PartTime, FullTime" == "fulltime,parttime").
-    private static string NormalizeCsv(IReadOnlyList<string> values) =>
-        string.Join(',', values.Select(v => v.ToLowerInvariant()).Order(StringComparer.Ordinal));
+    // Multi-value filters are order-insensitive. Case is folded only where ES folds it too:
+    // skills has a lowercase_normalizer, while employment_type / experience_level are case-sensitive
+    // keywords (SearchQuery already maps known values to their canonical spelling). Folding those
+    // would let an empty result for "freelance" be served for "Freelance".
+    private static string NormalizeCsv(IReadOnlyList<string> values, bool ignoreCase) =>
+        string.Join(',', values.Select(v => ignoreCase ? v.ToLowerInvariant() : v).Order(StringComparer.Ordinal));
 
     /// <summary>Legacy key builder kept for tests: hash portion of the cache key.</summary>
     public static string BuildKey(SearchQuery query) => BuildKeyHash(query);

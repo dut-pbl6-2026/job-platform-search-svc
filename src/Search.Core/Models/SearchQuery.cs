@@ -39,9 +39,23 @@ public record SearchQuery(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-    public IReadOnlyList<string> EmploymentTypes => SplitCsv(EmploymentType);
-    public IReadOnlyList<string> ExperienceLevels => SplitCsv(ExperienceLevel);
+    /// <summary>Canonical enum spellings stored by job-svc (api-conventions §6).</summary>
+    public static readonly IReadOnlyList<string> EmploymentTypeValues = ["FullTime", "PartTime", "Contract", "Internship"];
+    public static readonly IReadOnlyList<string> ExperienceLevelValues = ["Entry", "Mid", "Senior", "Lead"];
+
+    /// <summary>
+    /// employment_type / experience_level are case-sensitive keywords in ES, so known values are
+    /// parsed case-insensitively and sent in their canonical spelling ("fulltime" → "FullTime").
+    /// Unknown values pass through unchanged and simply match nothing.
+    /// </summary>
+    public IReadOnlyList<string> EmploymentTypes => Canonicalize(SplitCsv(EmploymentType), EmploymentTypeValues);
+    public IReadOnlyList<string> ExperienceLevels => Canonicalize(SplitCsv(ExperienceLevel), ExperienceLevelValues);
     public IReadOnlyList<string> SkillList => SplitCsv(Skills);
+
+    private static IReadOnlyList<string> Canonicalize(IReadOnlyList<string> values, IReadOnlyList<string> canonical) =>
+        values
+            .Select(v => canonical.FirstOrDefault(c => string.Equals(c, v, StringComparison.OrdinalIgnoreCase)) ?? v)
+            .ToArray();
 
     public int NormalizedPage => Page < 0 ? 0 : Page;
 
