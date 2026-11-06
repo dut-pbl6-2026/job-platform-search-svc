@@ -236,6 +236,62 @@ public class JobEventsConsumerTests
     }
 
     [Fact]
+    public async Task HandleMessageAsync_JobUpdated_UsesPayloadCreatedAt_NotOccurredAt()
+    {
+        var jobId = Guid.NewGuid();
+        var createdAt = OccurredAt.AddDays(-30);
+        var (consumer, search, _) = BuildConsumer();
+        var payload = ToUpdated(CreatedPayload(jobId)) with { CreatedAt = createdAt };
+
+        var outcome = await consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobUpdatedEvent>.Create(JobEventTypes.Updated, payload)));
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.LastIndexed!.CreatedAt.Should().Be(createdAt);
+        search.LastIndexed.UpdatedAt.Should().Be(OccurredAt);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_JobUpdatedWithoutCreatedAt_KeepsIndexedCreatedAtAndSkills()
+    {
+        // Producer on SharedKernel 0.2.0 (no CreatedAt), e.g. an admin approval of an old job.
+        var jobId = Guid.NewGuid();
+        var originalCreatedAt = OccurredAt.AddDays(-30);
+        var (consumer, search, _) = BuildConsumer();
+        search.Existing[jobId.ToString()] = new JobDocument
+        {
+            Id = jobId.ToString(),
+            CreatedAt = originalCreatedAt,
+            Skills = new List<string> { "C#", "Azure" },
+        };
+
+        var outcome = await consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobUpdatedEvent>.Create(JobEventTypes.Updated, ToUpdated(CreatedPayload(jobId)))));
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.LastIndexed!.CreatedAt.Should().Be(originalCreatedAt);
+        search.LastIndexed.UpdatedAt.Should().Be(OccurredAt);
+        search.LastIndexed.Skills.Should().Equal("C#", "Azure");
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_IndexReadFails_PropagatesSoMessageIsRetried()
+    {
+        var jobId = Guid.NewGuid();
+        var (consumer, search, _) = BuildConsumer();
+        search.GetFails = true;
+
+        var act = () => consumer.HandleAsync(
+            jobId.ToString(),
+            Serialize(EventEnvelope<JobUpdatedEvent>.Create(JobEventTypes.Updated, ToUpdated(CreatedPayload(jobId)))));
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        search.IndexCalls.Should().Be(0);
+    }
+
+    [Fact]
     public async Task HandleMessageAsync_ReplayedEvent_IsIdempotentOnDocumentId()
     {
         var jobId = Guid.NewGuid();
@@ -314,6 +370,13 @@ public class JobEventsConsumerTests
         public string? LastDeleted { get; private set; }
         public bool IndexResult { get; set; } = true;
         public bool DeleteResult { get; set; } = true;
+        public Dictionary<string, JobDocument> Existing { get; } = new();
+        public bool GetFails { get; set; }
+
+        public Task<JobDocument?> GetJobAsync(string jobId, CancellationToken cancellationToken = default) =>
+            GetFails
+                ? throw new InvalidOperationException("ES down")
+                : Task.FromResult(Existing.TryGetValue(jobId, out var doc) ? doc : null);
 
         public Task<bool> IndexJobAsync(JobDocument document, CancellationToken cancellationToken = default)
         {

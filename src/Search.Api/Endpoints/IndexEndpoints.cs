@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Search.Api.DTOs;
 using Search.Core.Interfaces;
+using Search.Core.Models;
 
 namespace Search.Api.Endpoints;
 
@@ -61,7 +62,14 @@ public static class IndexEndpoints
                 });
             }
 
-            var document = dto.ToDocument();
+            // job-svc's HTTP fallback replaces the whole document: keep the original created_at
+            // and skills when the payload does not carry them (review #15).
+            var createdAtKnown = dto.CreatedAt.HasValue;
+            var skillsKnown = dto.Skills is not null;
+            var existing = createdAtKnown && skillsKnown
+                ? null
+                : await searchService.GetJobAsync(dto.Id, cancellationToken);
+            var document = JobDocumentMerge.KeepStableFields(dto.ToDocument(), existing, createdAtKnown, skillsKnown);
             var success = await searchService.IndexJobAsync(document, cancellationToken);
 
             if (!success)

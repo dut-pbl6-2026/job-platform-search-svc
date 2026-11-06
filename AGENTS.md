@@ -51,6 +51,7 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 - Consume `job.created` → index new document, `job.updated` → update document, `job.deleted` → delete document from ES index. Kafka topic `job-events` group `search-svc`.
 - Week 2 Day 1 (Tue): direct HTTP sync from Job Service (simple approach), Kafka consumer added W3 by TM1+TM2.
 - Idempotent consumers: use `job_id` as ES document `_id`.
+- Upserts replace the whole document: `created_at` comes from the event's `CreatedAt` (SharedKernel 0.3.0+), else the indexed value; `skills` (never in job events) is kept from the indexed document (`JobDocumentMerge`). `OccurredAt` only sets `updated_at`.
 
 ## No hard-coding (STRICT — apply to every file you touch)
 
