@@ -3,7 +3,7 @@ namespace Search.Core.Models;
 /// <summary>
 /// Sync paths (Kafka job events, job-svc HTTP fallback) replace the whole ES document.
 /// Fields the incoming payload does not carry must be copied from the indexed version,
-/// otherwise every update resets them (review #15).
+/// otherwise every update resets them.
 /// </summary>
 public static class JobDocumentMerge
 {

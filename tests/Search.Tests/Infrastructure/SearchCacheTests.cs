@@ -66,6 +66,17 @@ public class SearchCacheTests
     }
 
     [Fact]
+    public void BuildKey_UnknownEnumValues_KeepCase()
+    {
+        // ES matches employment_type case-sensitively: an empty result for one spelling must not
+        // be served for another.
+        var lower = new SearchQuery(EmploymentType: "freelance");
+        var pascal = new SearchQuery(EmploymentType: "Freelance");
+
+        RedisSearchCache.BuildKey(lower).Should().NotBe(RedisSearchCache.BuildKey(pascal));
+    }
+
+    [Fact]
     public async Task SetAndGet_Roundtrip_ShouldReturnCachedResult()
     {
         var cache = CreateCache();

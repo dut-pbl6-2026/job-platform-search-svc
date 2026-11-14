@@ -78,6 +78,24 @@ public class SearchQueryTests
         query.SkillList.Should().Equal("C#", "React");
     }
 
+    [Fact]
+    public void EnumFilters_KnownValuesUseCanonicalSpelling()
+    {
+        var query = new SearchQuery(EmploymentType: "fulltime, PARTTIME", ExperienceLevel: "senior,lead");
+
+        query.EmploymentTypes.Should().Equal("FullTime", "PartTime");
+        query.ExperienceLevels.Should().Equal("Senior", "Lead");
+    }
+
+    [Fact]
+    public void EnumFilters_UnknownValuesPassThroughUnchanged()
+    {
+        var query = new SearchQuery(EmploymentType: "freelance,FullTime", ExperienceLevel: "Junior");
+
+        query.EmploymentTypes.Should().Equal("freelance", "FullTime");
+        query.ExperienceLevels.Should().Equal("Junior");
+    }
+
     [Theory]
     [InlineData(null, false)]
     [InlineData("or", false)]

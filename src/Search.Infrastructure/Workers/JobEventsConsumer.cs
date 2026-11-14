@@ -205,7 +205,7 @@ public class JobEventsConsumer : KafkaConsumerService
 
     /// <summary>
     /// Events replace the whole ES document but never carry skills, and producers older than
-    /// SharedKernel 0.3.0 do not send CreatedAt: keep those from the indexed version (review #15).
+    /// SharedKernel 0.3.0 do not send CreatedAt: keep those from the indexed version.
     /// An ES read failure throws, so the message is retried instead of losing the fields.
     /// </summary>
     private async Task<JobDocument> KeepStableFieldsAsync(JobDocument document, bool createdAtKnown, CancellationToken ct)
