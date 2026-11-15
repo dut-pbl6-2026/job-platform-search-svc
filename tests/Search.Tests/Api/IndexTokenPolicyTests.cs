@@ -1,9 +1,30 @@
+using Microsoft.Extensions.Configuration;
 using Search.Api.Endpoints;
 
 namespace Search.Tests.Api;
 
 public class IndexTokenPolicyTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ConfiguredIndexToken_UnsetOrBlank_IsNull(string? value)
+    {
+        IndexEndpoints.ConfiguredIndexToken(ConfigWith(value)).Should().BeNull();
+    }
+
+    [Fact]
+    public void ConfiguredIndexToken_SurroundingWhitespace_IsTrimmed()
+    {
+        IndexEndpoints.ConfiguredIndexToken(ConfigWith("  secret  ")).Should().Be("secret");
+    }
+
+    private static IConfiguration ConfigWith(string? token) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { [IndexEndpoints.IndexTokenConfigKey] = token })
+            .Build();
+
     [Fact]
     public void Evaluate_UnsetTokenOutsideDevelopment_IsUnavailable()
     {
