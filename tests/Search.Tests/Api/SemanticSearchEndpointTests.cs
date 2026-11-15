@@ -9,11 +9,11 @@ using Search.Core.Models;
 
 namespace Search.Tests.Api;
 
-public class SemanticSearchEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public class SemanticSearchEndpointTests : IClassFixture<ApiTestFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly ApiTestFactory _factory;
 
-    public SemanticSearchEndpointTests(WebApplicationFactory<Program> factory)
+    public SemanticSearchEndpointTests(ApiTestFactory factory)
     {
         _factory = factory;
     }

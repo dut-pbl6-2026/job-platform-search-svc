@@ -19,11 +19,11 @@ using Search.Infrastructure.Configuration;
 
 namespace Search.Tests.Api;
 
-public class HealthReadinessTests : IClassFixture<WebApplicationFactory<Program>>
+public class HealthReadinessTests : IClassFixture<ApiTestFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly ApiTestFactory _factory;
 
-    public HealthReadinessTests(WebApplicationFactory<Program> factory) => _factory = factory;
+    public HealthReadinessTests(ApiTestFactory factory) => _factory = factory;
 
     // In-memory transport: deterministic, no network.
     private static ElasticsearchClient EsClient(InMemoryRequestInvoker connection) =>

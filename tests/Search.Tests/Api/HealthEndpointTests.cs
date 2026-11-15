@@ -5,11 +5,11 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace Search.Tests.Api;
 
-public class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public class HealthEndpointTests : IClassFixture<ApiTestFactory>
 {
     private readonly HttpClient _client;
 
-    public HealthEndpointTests(WebApplicationFactory<Program> factory)
+    public HealthEndpointTests(ApiTestFactory factory)
     {
         _client = factory.CreateClient();
     }

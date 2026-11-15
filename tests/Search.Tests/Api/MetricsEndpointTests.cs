@@ -7,11 +7,11 @@ namespace Search.Tests.Api;
 /// /metrics backs the Prometheus scrape target (infra/docker/prometheus/prometheus.yml).
 /// Asserts the instrumentation is actually wired up, not just that the route exists.
 /// </summary>
-public class MetricsEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public class MetricsEndpointTests : IClassFixture<ApiTestFactory>
 {
     private readonly HttpClient _client;
 
-    public MetricsEndpointTests(WebApplicationFactory<Program> factory)
+    public MetricsEndpointTests(ApiTestFactory factory)
     {
         _client = factory.CreateClient();
     }

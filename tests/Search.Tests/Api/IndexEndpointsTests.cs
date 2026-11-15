@@ -15,11 +15,11 @@ using Search.Core.Models;
 
 namespace Search.Tests.Api;
 
-public class IndexEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
+public class IndexEndpointsTests : IClassFixture<ApiTestFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly ApiTestFactory _factory;
 
-    public IndexEndpointsTests(WebApplicationFactory<Program> factory)
+    public IndexEndpointsTests(ApiTestFactory factory)
     {
         _factory = factory;
     }
