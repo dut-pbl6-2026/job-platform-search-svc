@@ -1,6 +1,9 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -260,5 +263,107 @@ public class IndexEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
             CompanyName: "Acme Corp", Location: "Ha Noi"));
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task IndexJob_WithTokenConfigured_RejectsWrongToken()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        var client = WithIndexToken(_factory, mockSearchService).CreateClient();
+        client.DefaultRequestHeaders.Add("X-Internal-Token", "test-tokeN");
+
+        var response = await client.PostAsJsonAsync("/api/search/index", new JobSyncDto(
+            Id: "job-101", Title: "Fullstack Engineer", Description: "Awesome opportunity",
+            CompanyName: "Acme Corp", Location: "Ha Noi"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        mockSearchService.Verify(
+            s => s.IndexJobAsync(It.IsAny<JobDocument>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteJob_WithTokenConfigured_RejectsWrongToken()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        var client = WithIndexToken(_factory, mockSearchService).CreateClient();
+        client.DefaultRequestHeaders.Add("X-Internal-Token", "wrong");
+
+        var response = await client.DeleteAsync("/api/search/index/job-101");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        mockSearchService.Verify(
+            s => s.DeleteJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public void Startup_WithoutTokenOutsideDevelopment_Fails()
+    {
+        var factory = _factory.WithWebHostBuilder(builder => builder.UseEnvironment("Production"));
+
+        var act = () => factory.CreateClient();
+
+        act.Should().Throw<Exception>()
+            .Which.ToString().Should().Contain("SEARCH_INDEX_TOKEN");
+    }
+
+    [Fact]
+    public async Task BulkIndexJobs_ChunkedBodyOverLimit_ReturnsPayloadTooLarge()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        var client = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddSingleton(mockSearchService.Object))).CreateClient();
+        var content = new StreamContent(new MemoryStream(OversizedBulkBody()));
+
+        var response = await client.PostAsync("/api/search/bulk-index", content);
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        mockSearchService.Verify(
+            s => s.BulkIndexJobsAsync(It.IsAny<IEnumerable<JobDocument>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task BulkIndexJobs_ChunkedBodyUnderLimit_IsIndexed()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        mockSearchService
+            .Setup(s => s.BulkIndexJobsAsync(It.IsAny<IEnumerable<JobDocument>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+        var client = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddSingleton(mockSearchService.Object))).CreateClient();
+        var body = Encoding.UTF8.GetBytes("[{\"id\":\"job-1\",\"title\":\"Dev\",\"description\":\"Desc\"}]");
+
+        var response = await client.PostAsync("/api/search/bulk-index", new StreamContent(new MemoryStream(body)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        mockSearchService.Verify(
+            s => s.BulkIndexJobsAsync(It.IsAny<IEnumerable<JobDocument>>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task BulkIndexJobs_KnownLengthOverLimit_ReturnsPayloadTooLarge()
+    {
+        var mockSearchService = new Mock<ISearchService>();
+        var client = _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services => services.AddSingleton(mockSearchService.Object))).CreateClient();
+        var content = new ByteArrayContent(OversizedBulkBody());
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+        var response = await client.PostAsync("/api/search/bulk-index", content);
+
+        response.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+        mockSearchService.Verify(
+            s => s.BulkIndexJobsAsync(It.IsAny<IEnumerable<JobDocument>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private static byte[] OversizedBulkBody()
+    {
+        var description = new string('x', 5_000_000);
+        return Encoding.UTF8.GetBytes(
+            $"[{{\"id\":\"job-1\",\"title\":\"Dev\",\"description\":\"{description}\"}}]");
     }
 }

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Search.Api.DTOs;
 using Search.Core.Interfaces;
@@ -9,40 +10,38 @@ namespace Search.Api.Endpoints;
 
 public static class IndexEndpoints
 {
+    public const string IndexTokenConfigKey = "SEARCH_INDEX_TOKEN";
     private const string IndexTokenHeader = "X-Internal-Token";
     private const long MaxBulkBodyBytes = 5_000_000;
 
+    // Trimmed token, or null when unset. Program.cs uses the same value to fail startup.
+    public static string? ConfiguredIndexToken(IConfiguration configuration) =>
+        configuration[IndexTokenConfigKey]?.Trim() is { Length: > 0 } token ? token : null;
+
     public static void MapIndexEndpoints(this IEndpointRouteBuilder app)
     {
+        // The gateway routes /api/search/** publicly, so the token is the only barrier to index
+        // writes. An unset token is accepted only in Development; everywhere else it is rejected.
         var group = app.MapGroup("/api/search")
             .WithTags("Indexing")
-            // S-1: service-to-service auth. The gateway routes /api/search/**
-            // publicly, so without this anyone could inject/delete index docs.
-            // Token from SEARCH_INDEX_TOKEN (or IndexAuth:Token); enforced when
-            // set. Unset = local-dev open mode with a loud startup warning.
             .AddEndpointFilter(async (context, next) =>
             {
-                var configuration = context.HttpContext.RequestServices
-                    .GetRequiredService<IConfiguration>();
-                var expected = configuration["SEARCH_INDEX_TOKEN"] ?? configuration["IndexAuth:Token"];
-                if (string.IsNullOrWhiteSpace(expected))
-                {
-                    return await next(context);
-                }
+                var services = context.HttpContext.RequestServices;
+                var decision = IndexTokenPolicy.Evaluate(
+                    services.GetRequiredService<IHostEnvironment>().IsDevelopment(),
+                    ConfiguredIndexToken(services.GetRequiredService<IConfiguration>()),
+                    context.HttpContext.Request.Headers[IndexTokenHeader].ToString());
 
-                var provided = context.HttpContext.Request.Headers[IndexTokenHeader].ToString() ?? "";
-                var match = provided.Length == expected.Trim().Length &&
-                    CryptographicOperations.FixedTimeEquals(
-                        Encoding.UTF8.GetBytes(provided),
-                        Encoding.UTF8.GetBytes(expected.Trim()));
-                if (!match)
+                return decision switch
                 {
-                    return Results.Json(
+                    IndexTokenDecision.Allowed => await next(context),
+                    IndexTokenDecision.Unauthorized => Results.Json(
                         new { message = "Unauthorized. Valid X-Internal-Token required." },
-                        statusCode: StatusCodes.Status401Unauthorized);
-                }
-
-                return await next(context);
+                        statusCode: StatusCodes.Status401Unauthorized),
+                    _ => Results.Json(
+                        new { message = "Index endpoints are disabled: SEARCH_INDEX_TOKEN is not configured." },
+                        statusCode: StatusCodes.Status503ServiceUnavailable),
+                };
             });
 
         // POST /api/search/index
@@ -92,13 +91,37 @@ public static class IndexEndpoints
         .ProducesProblem(StatusCodes.Status500InternalServerError);
 
         // POST /api/search/bulk-index
+        // The body is read here instead of bound by the framework: binding deserializes before any
+        // handler code runs, so a size check placed after it cannot prevent the work.
         group.MapPost("/bulk-index", async (
             HttpContext httpContext,
-            [FromBody] List<JobSyncDto> dtos,
             [FromServices] ISearchService searchService,
             [FromServices] ISearchCache cache,
             CancellationToken cancellationToken) =>
         {
+            var body = await ReadBoundedBodyAsync(httpContext.Request, MaxBulkBodyBytes, cancellationToken);
+            if (body is null)
+            {
+                return Results.Json(
+                    new { message = $"Bulk payload exceeds {MaxBulkBodyBytes} bytes." },
+                    statusCode: StatusCodes.Status413PayloadTooLarge);
+            }
+
+            List<JobSyncDto>? dtos;
+            try
+            {
+                dtos = JsonSerializer.Deserialize<List<JobSyncDto>>(body, JsonSerializerOptions.Web);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Invalid JSON",
+                    Detail = "Request body must be a JSON array of job documents."
+                });
+            }
+
             if (dtos == null || dtos.Count == 0)
             {
                 return Results.BadRequest(new ProblemDetails
@@ -120,15 +143,6 @@ public static class IndexEndpoints
                 });
             }
 
-            // S-2: count cap alone doesn't bound memory — 1000 huge docs could
-            // exhaust the worker. Reject oversized bodies with 413.
-            if (httpContext.Request.ContentLength > MaxBulkBodyBytes)
-            {
-                return Results.Json(
-                    new { message = $"Bulk payload exceeds {MaxBulkBodyBytes} bytes." },
-                    statusCode: StatusCodes.Status413PayloadTooLarge);
-            }
-
             var documents = dtos.Select(d => d.ToDocument());
             var count = await searchService.BulkIndexJobsAsync(documents, cancellationToken);
 
@@ -141,8 +155,10 @@ public static class IndexEndpoints
         })
         .WithName("BulkIndexJobs")
         .WithSummary("Bulk index multiple job documents in Elasticsearch")
+        .Accepts<List<JobSyncDto>>("application/json")
         .Produces<BulkSyncResponseDto>(StatusCodes.Status200OK)
-        .ProducesProblem(StatusCodes.Status400BadRequest);
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status413PayloadTooLarge);
 
         // DELETE /api/search/index/{id}
         group.MapDelete("/index/{id}", async (
@@ -180,5 +196,57 @@ public static class IndexEndpoints
         .Produces(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
         .ProducesProblem(StatusCodes.Status500InternalServerError);
+    }
+
+    // Reads at most limit bytes whatever Content-Length says (absent for chunked bodies).
+    // Returns null when the body is larger.
+    private static async Task<byte[]?> ReadBoundedBodyAsync(HttpRequest request, long limit, CancellationToken cancellationToken)
+    {
+        if (request.ContentLength > limit)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await request.Body.ReadAsync(chunk, cancellationToken)) > 0)
+        {
+            if (buffer.Length + read > limit)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
+    }
+}
+
+public enum IndexTokenDecision
+{
+    Allowed,
+    Unauthorized,
+    Unavailable,
+}
+
+public static class IndexTokenPolicy
+{
+    // An unset token is accepted only in Development. Otherwise the endpoints stay closed
+    // (and Program.cs refuses to start), so a missing env var can never open index writes.
+    public static IndexTokenDecision Evaluate(bool isDevelopment, string? expected, string provided)
+    {
+        if (expected is null)
+        {
+            return isDevelopment ? IndexTokenDecision.Allowed : IndexTokenDecision.Unavailable;
+        }
+
+        // Hashing both sides gives equal-length inputs, so FixedTimeEquals does not leak the
+        // expected token's length (same approach as job-svc InternalStatsEndpoints).
+        var match = CryptographicOperations.FixedTimeEquals(
+            SHA256.HashData(Encoding.UTF8.GetBytes(provided)),
+            SHA256.HashData(Encoding.UTF8.GetBytes(expected)));
+        return match ? IndexTokenDecision.Allowed : IndexTokenDecision.Unauthorized;
     }
 }
