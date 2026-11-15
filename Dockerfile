@@ -4,10 +4,11 @@ COPY src/Search.Core/Search.Core.csproj src/Search.Core/
 COPY src/Search.Infrastructure/Search.Infrastructure.csproj src/Search.Infrastructure/
 COPY src/Search.Api/Search.Api.csproj src/Search.Api/
 COPY nuget.config ./
-COPY local-feed/ local-feed/
-RUN dotnet restore src/Search.Api/Search.Api.csproj
+RUN --mount=type=secret,id=nuget_token,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/nuget_token)" dotnet restore src/Search.Api/Search.Api.csproj
 COPY . .
-RUN dotnet publish src/Search.Api/Search.Api.csproj -c Release -o /app/publish
+RUN --mount=type=secret,id=nuget_token,required=true \
+    GITHUB_TOKEN="$(cat /run/secrets/nuget_token)" dotnet publish src/Search.Api/Search.Api.csproj -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
