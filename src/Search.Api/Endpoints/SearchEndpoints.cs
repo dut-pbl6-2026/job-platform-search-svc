@@ -95,28 +95,13 @@ public static class SearchEndpoints
             var cached = await cache.GetAsync(searchQuery, cancellationToken);
             if (cached is not null)
             {
-                return Results.Ok(new JobSearchResponseDto(
-                    Items: cached.Items,
-                    Total: cached.Total,
-                    Page: cached.Page,
-                    Size: cached.Size,
-                    TotalPages: cached.TotalPages,
-                    Message: cached.Message));
+                return Results.Ok(JobSearchResponseDto.FromResult(cached));
             }
 
             var result = await searchService.SearchJobsAsync(searchQuery, cancellationToken);
             await cache.SetAsync(searchQuery, result, cancellationToken);
 
-            var response = new JobSearchResponseDto(
-                Items: result.Items,
-                Total: result.Total,
-                Page: result.Page,
-                Size: result.Size,
-                TotalPages: result.TotalPages,
-                Message: result.Message
-            );
-
-            return Results.Ok(response);
+            return Results.Ok(JobSearchResponseDto.FromResult(result));
         })
         .WithName("SearchJobs")
         .WithSummary("Search jobs with full-text keywords, location and filters")
@@ -165,7 +150,7 @@ public static class SearchEndpoints
             {
                 var hits = await searchService.SearchSemanticAsync(text, size, cancellationToken);
                 return Results.Ok(new SemanticSearchResponseDto(
-                    hits.Select(h => new SemanticJobDto(h.Score, h.Job)).ToList()));
+                    hits.Select(SemanticJobDto.FromHit).ToList()));
             }
             catch (EmbeddingUnavailableException)
             {
