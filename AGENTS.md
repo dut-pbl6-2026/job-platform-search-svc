@@ -22,7 +22,7 @@ Agent uses `mise exec -- dotnet ...` / `mise exec -- infisical ...` due to non-i
 ## Architecture — clean Api/Core/Infrastructure
 
 ```
-src/Search.Api            → Web API (Program.cs JWT Bearer + Swagger + /health)
+src/Search.Api            → Web API (Program.cs + Swagger + /health; no JWT validation: the gateway authenticates)
 src/Search.Core           → Domain (JobDocument DTO, SearchResult, SearchQuery)
 src/Search.Infrastructure → Services (ElasticsearchService, RedisCache — SHOULD W5)
 tests/Search.Tests        → xunit
@@ -85,14 +85,14 @@ var indexName = builder.Configuration["ELASTICSEARCH_INDEX"]
 - `appsettings.json` MAY contain **placeholder comments** like `"<set via env>"` but MUST NOT contain real URLs, hostnames, or credentials.
 - `appsettings.Development.json` MAY point to `localhost` **only** for local-dev convenience; never commit real passwords.
 - The single source of truth for all env values is `../job-platform-infra/envs/.env.dev.example` — use `mise run sync-env` to pull it.
-- Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `JWT_SECRET`, `AI_SERVICE_URL`, `AI_INTERNAL_TOKEN_FOR_SEARCH` (this service's bearer for ai-svc `/api/internal/embed`, named `<CALLEE>_INTERNAL_TOKEN_FOR_<CALLER>`; unset => every embedding call fails).
+- Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `AI_SERVICE_URL`, `AI_INTERNAL_TOKEN_FOR_SEARCH` (this service's bearer for ai-svc `/api/internal/embed`, named `<CALLEE>_INTERNAL_TOKEN_FOR_<CALLER>`; unset => every embedding call fails).
 
 ## 2026 best practice (NFR `MAINT`)
 
 - `dotnet 10.0.100` `net10.0` `nullable enable` `ImplicitUsings` file-scoped namespace, `ProblemDetails` + `UseExceptionHandler` + `ILogger` JSON `ERROR/WARN/INFO/DEBUG`, `GET /health` per `8-system-architecture.md`.
 - `dotnet build --warnaserror` + `dotnet format --verify-no-changes` (mise `build/test/format`), coverage `>70%` `MAINT-02`.
 - ES client: `Elastic.Clients.Elasticsearch 8.*` (official .NET client).
-- Never commit `.env` (`.gitignore`), `mise run sync-env` single source `../job-platform-infra/envs/.env.dev.example` (`ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `JWT_SECRET`).
+- Never commit `.env` (`.gitignore`), `mise run sync-env` single source `../job-platform-infra/envs/.env.dev.example` (`ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`).
 
 ## Workflow
 
