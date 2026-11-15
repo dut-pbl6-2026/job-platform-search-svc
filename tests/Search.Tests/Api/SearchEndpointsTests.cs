@@ -11,11 +11,11 @@ using Search.Core.Models;
 
 namespace Search.Tests.Api;
 
-public class SearchEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
+public class SearchEndpointsTests : IClassFixture<ApiTestFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly ApiTestFactory _factory;
 
-    public SearchEndpointsTests(WebApplicationFactory<Program> factory)
+    public SearchEndpointsTests(ApiTestFactory factory)
     {
         _factory = factory;
     }
