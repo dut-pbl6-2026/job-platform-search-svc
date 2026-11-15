@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Search.Core.Models;
 
 namespace Search.Tests.Core;
@@ -46,6 +47,21 @@ public class JobDocumentTests
         json.Should().Contain("\"salary_min\":20000000");
         json.Should().Contain("\"salary_max\":40000000");
         json.Should().Contain("\"category_name\":\"IT / Software\"");
+    }
+
+    [Fact]
+    public void JobDocument_IndexSchema_IsSnakeCaseAndUnchanged()
+    {
+        // The Elasticsearch mapping and the crawler write these exact names. Changing the API casing
+        // must never change this list (API responses map through JobResponseDto instead).
+        var node = JsonSerializer.SerializeToNode(new JobDocument())!.AsObject();
+
+        node.Select(p => p.Key).Should().BeEquivalentTo(new[]
+        {
+            "id", "title", "description", "company_id", "company_name", "location", "salary_min", "salary_max",
+            "currency", "category_id", "category_name", "employment_type", "experience_level", "status",
+            "recruiter_id", "created_at", "updated_at", "expires_at", "requirements", "benefits", "skills",
+        });
     }
 
     [Fact]

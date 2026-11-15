@@ -125,11 +125,11 @@ public class ApiContractTests : IClassFixture<SearchApiFactory>
 
         var item = json.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("id").GetString() == "job-c-7");
         item.GetProperty("title").ValueKind.Should().Be(JsonValueKind.String);
-        item.GetProperty("company_name").GetString().Should().Be("Acme");
-        item.GetProperty("salary_min").ValueKind.Should().BeOneOf(JsonValueKind.Null, JsonValueKind.Number);
+        item.GetProperty("companyName").GetString().Should().Be("Acme");
+        item.GetProperty("salaryMin").ValueKind.Should().BeOneOf(JsonValueKind.Null, JsonValueKind.Number);
         item.GetProperty("skills").ValueKind.Should().Be(JsonValueKind.Array);
-        item.GetProperty("created_at").ValueKind.Should().Be(JsonValueKind.String);
-        item.TryGetProperty("companyName", out _).Should().BeFalse();
+        item.GetProperty("createdAt").ValueKind.Should().Be(JsonValueKind.String);
+        item.TryGetProperty("company_name", out _).Should().BeFalse("API responses use camelCase names");
     }
 
     [Fact]
@@ -145,7 +145,10 @@ public class ApiContractTests : IClassFixture<SearchApiFactory>
         var hit = json.GetProperty("items").EnumerateArray().First();
         hit.EnumerateObject().Select(p => p.Name).Should().BeEquivalentTo(["score", "job"]);
         hit.GetProperty("score").ValueKind.Should().Be(JsonValueKind.Number);
-        hit.GetProperty("job").GetProperty("id").GetString().Should().Be("job-c-8");
+        var job = hit.GetProperty("job");
+        job.GetProperty("id").GetString().Should().Be("job-c-8");
+        job.EnumerateObject().Select(p => p.Name).Should().Contain(["companyName", "employmentType", "createdAt", "skills"]);
+        job.TryGetProperty("company_name", out _).Should().BeFalse("API responses use camelCase names");
     }
 
     [Fact]
