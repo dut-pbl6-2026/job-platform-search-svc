@@ -53,7 +53,7 @@ public static class ElasticsearchServiceExtensions
         services.Configure<AiServiceOptions>(o =>
         {
             o.Url = configuration["AI_SERVICE_URL"] ?? configuration["AiService:Url"] ?? string.Empty;
-            o.InternalToken = configuration["INTERNAL_SERVICE_TOKEN"] ?? configuration["AiService:InternalToken"] ?? string.Empty;
+            o.InternalToken = configuration["AI_INTERNAL_TOKEN_FOR_SEARCH"] ?? configuration["AiService:InternalToken"] ?? string.Empty;
         });
         services.AddHttpClient<IEmbeddingClient, AiEmbeddingClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
 

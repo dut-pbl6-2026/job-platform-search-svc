@@ -85,7 +85,7 @@ var indexName = builder.Configuration["ELASTICSEARCH_INDEX"]
 - `appsettings.json` MAY contain **placeholder comments** like `"<set via env>"` but MUST NOT contain real URLs, hostnames, or credentials.
 - `appsettings.Development.json` MAY point to `localhost` **only** for local-dev convenience; never commit real passwords.
 - The single source of truth for all env values is `../job-platform-infra/envs/.env.dev.example` — use `mise run sync-env` to pull it.
-- Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `JWT_SECRET`, `AI_SERVICE_URL`, `INTERNAL_SERVICE_TOKEN` (bearer for ai-svc `/api/internal/embed`; unset => every embedding call fails).
+- Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `JWT_SECRET`, `AI_SERVICE_URL`, `AI_INTERNAL_TOKEN_FOR_SEARCH` (this service's bearer for ai-svc `/api/internal/embed`, named `<CALLEE>_INTERNAL_TOKEN_FOR_<CALLER>`; unset => every embedding call fails).
 
 ## 2026 best practice (NFR `MAINT`)
 
