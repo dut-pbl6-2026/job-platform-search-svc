@@ -68,7 +68,7 @@ public class AiEmbeddingClient : IEmbeddingClient
 
         if (string.IsNullOrWhiteSpace(_options.InternalToken))
         {
-            throw new EmbeddingUnavailableException("INTERNAL_SERVICE_TOKEN is not configured.");
+            throw new EmbeddingUnavailableException("AI_INTERNAL_TOKEN_FOR_SEARCH is not configured.");
         }
 
         using var request = new HttpRequestMessage(method, new Uri(baseUri, path))
