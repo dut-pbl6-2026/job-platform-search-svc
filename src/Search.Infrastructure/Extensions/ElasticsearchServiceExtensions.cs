@@ -1,6 +1,7 @@
 using Elastic.Clients.Elasticsearch;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Options;
 using Search.Core.Interfaces;
 using Search.Infrastructure.Configuration;
@@ -46,6 +47,15 @@ public static class ElasticsearchServiceExtensions
 
             return new ElasticsearchClient(settings);
         });
+
+        // Embeddings come from ai-svc's local model. Config is read here but validated per call
+        // (AiEmbeddingClient fails closed), so the service still starts in dev without ai-svc.
+        services.Configure<AiServiceOptions>(o =>
+        {
+            o.Url = configuration["AI_SERVICE_URL"] ?? configuration["AiService:Url"] ?? string.Empty;
+            o.InternalToken = configuration["INTERNAL_SERVICE_TOKEN"] ?? configuration["AiService:InternalToken"] ?? string.Empty;
+        });
+        services.AddHttpClient<IEmbeddingClient, AiEmbeddingClient>(c => c.Timeout = TimeSpan.FromSeconds(60));
 
         services.AddSingleton<ElasticsearchInitializer>();
         services.AddSingleton<ISearchService, ElasticsearchService>();

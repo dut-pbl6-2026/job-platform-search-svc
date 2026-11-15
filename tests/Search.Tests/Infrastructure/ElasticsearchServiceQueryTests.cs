@@ -30,6 +30,7 @@ public class ElasticsearchServiceQueryTests
         var service = new ElasticsearchService(
             new ElasticsearchClient(settings),
             Options.Create(new ElasticsearchOptions { Index = "jobs" }),
+            new FakeEmbeddingClient(),
             NullLogger<ElasticsearchService>.Instance);
 
         await service.SearchJobsAsync(query);
