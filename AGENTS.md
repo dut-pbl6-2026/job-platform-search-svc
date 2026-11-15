@@ -52,6 +52,7 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 
 - Consume `job.created` → index new document, `job.updated` → update document, `job.deleted` → delete document from ES index. Kafka topic `job-events` group `search-svc`.
 - Week 2 Day 1 (Tue): direct HTTP sync from Job Service (simple approach), Kafka consumer added W3 by TM1+TM2.
+- `job.external.upserted` (crawler, `Search.Infrastructure/Events/ExternalJobEvents.cs`) on the same `job-events` topic: index the scraped job under `_id` = `payload.jobId`, which must equal sha256(`sourceUrl`). Missing title or a bad id is Skipped; an index failure is Retried. Keeps `created_at` and `skills` from the indexed document. Golden contract also in `job-platform-crawler/tests/fixtures/job_external_upserted.v1.json`; keep the two identical.
 - Idempotent consumers: use `job_id` as ES document `_id`.
 - Upserts replace the whole document: `created_at` comes from the event's `CreatedAt` (SharedKernel 0.3.0+), else the indexed value; `skills` (never in job events) is kept from the indexed document (`JobDocumentMerge`). `OccurredAt` only sets `updated_at`.
 

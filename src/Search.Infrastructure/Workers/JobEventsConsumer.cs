@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Search.Core.Interfaces;
 using Search.Core.Models;
+using Search.Infrastructure.Events;
 using SharedKernel.Events;
 using SharedKernel.Kafka;
 
@@ -173,6 +176,9 @@ public class JobEventsConsumer : KafkaConsumerService
                     _typedLogger.LogWarning("Kafka poison message on {Topic}: cannot parse {EventType}. Skipping.", Topic, eventType);
                     return MessageOutcome.Skip;
 
+                case ExternalJobEventTypes.Upserted:
+                    return await HandleExternalUpsertAsync(key, value, ct);
+
                 default:
                     _typedLogger.LogWarning("Kafka unknown event {EventType} on {Topic}. Skipping.", eventType, Topic);
                     return MessageOutcome.Skip;
@@ -184,6 +190,61 @@ public class JobEventsConsumer : KafkaConsumerService
             return MessageOutcome.Skip;
         }
     }
+
+    /// <summary>
+    /// Crawled external job (job.external.upserted). The id must be sha256 of the source URL,
+    /// the same key the crawler always used, so re-crawls land on the same document.
+    /// Keeps created_at and skills from the indexed version (the payload carries neither).
+    /// </summary>
+    private async Task<MessageOutcome> HandleExternalUpsertAsync(string? key, string value, CancellationToken ct)
+    {
+        if (!TryParseEnvelope<ExternalJobUpsertedPayload>(value, out var envelope) || envelope is null)
+        {
+            _typedLogger.LogWarning("Kafka poison message on {Topic}: cannot parse {EventType}. Skipping.", Topic, ExternalJobEventTypes.Upserted);
+            return MessageOutcome.Skip;
+        }
+
+        var payload = envelope.Payload;
+        if (string.IsNullOrWhiteSpace(payload.Title) || string.IsNullOrWhiteSpace(payload.SourceUrl)
+            || !IsSha256OfSourceUrl(payload.JobId, payload.SourceUrl))
+        {
+            _typedLogger.LogWarning("Kafka poison message on {Topic}: {EventType} has an empty title or a job id that is not sha256(sourceUrl). Skipping.", Topic, ExternalJobEventTypes.Upserted);
+            return MessageOutcome.Skip;
+        }
+
+        if (string.IsNullOrWhiteSpace(key) || key.Trim() != payload.JobId)
+        {
+            _typedLogger.LogWarning("Kafka key mismatch on {Topic}: key={Key} job={JobId}. Using payload id.", Topic, key, payload.JobId);
+        }
+
+        var occurredAt = payload.OccurredAt == default ? DateTime.UtcNow : payload.OccurredAt;
+        var document = new JobDocument
+        {
+            Id = payload.JobId,
+            Title = payload.Title,
+            Description = payload.Description ?? string.Empty,
+            CompanyName = payload.CompanyName ?? string.Empty,
+            Location = payload.Location ?? string.Empty,
+            SalaryMin = payload.SalaryMin,
+            SalaryMax = payload.SalaryMax,
+            Currency = string.IsNullOrWhiteSpace(payload.Currency) ? "VND" : payload.Currency,
+            CategoryName = payload.CategoryName,
+            // The crawler does not know the employment type. Empty keeps crawled jobs out of
+            // the FullTime filter instead of defaulting them to it.
+            EmploymentType = string.Empty,
+            Status = "Active",
+            Requirements = payload.Requirements,
+            UpdatedAt = occurredAt,
+            CreatedAt = occurredAt,
+        };
+        document = await KeepStableFieldsAsync(document, createdAtKnown: false, ct);
+
+        var indexed = await IndexDocumentAsync(document, ct);
+        return indexed ? MessageOutcome.Handled : MessageOutcome.Retry;
+    }
+
+    private static bool IsSha256OfSourceUrl(string jobId, string sourceUrl) =>
+        jobId == Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourceUrl))).ToLowerInvariant();
 
     public async Task HandleIndexAsync(JobDocument document, CancellationToken ct = default)
     {

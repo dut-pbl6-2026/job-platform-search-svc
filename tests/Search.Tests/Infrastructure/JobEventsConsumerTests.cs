@@ -307,6 +307,114 @@ public class JobEventsConsumerTests
         search.LastIndexed!.Id.Should().Be(jobId.ToString());
     }
 
+    // Golden contract shared with job-platform-crawler tests/fixtures/job_external_upserted.v1.json.
+    // Keep the two files identical; the crawler test pins the producer side.
+    private const string ExternalGoldenJson = """
+        {
+          "eventId": "6f1c2a7e-3b9d-4e8a-9c1f-2d5b7a8e4f10",
+          "eventType": "job.external.upserted",
+          "version": 1,
+          "timestamp": "2026-11-15T08:00:00Z",
+          "payload": {
+            "jobId": "ac95e82c2ab16cff0ed7fab905e6a8c6a2c72dcea530f8cd0f587c36fe9f166a",
+            "sourceUrl": "https://vieclam.gov.vn/search/job-detail?id=101",
+            "title": "Nhan vien kinh doanh",
+            "companyName": "Cong ty ABC",
+            "location": "Ha Noi",
+            "salaryMin": 5500000,
+            "salaryMax": 7000000,
+            "currency": "VND",
+            "description": "Mo ta cong viec",
+            "requirements": null,
+            "categoryName": "Kinh doanh",
+            "occurredAt": "2026-11-15T08:00:00Z"
+          }
+        }
+        """;
+
+    private const string ExternalJobId = "ac95e82c2ab16cff0ed7fab905e6a8c6a2c72dcea530f8cd0f587c36fe9f166a";
+
+    [Fact]
+    public async Task HandleMessageAsync_ExternalJobGoldenContract_IndexesUnderSha256Id()
+    {
+        var (consumer, search, cache) = BuildConsumer();
+
+        var outcome = await consumer.HandleAsync(ExternalJobId, ExternalGoldenJson);
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.IndexCalls.Should().Be(1);
+        var doc = search.LastIndexed!;
+        doc.Id.Should().Be(ExternalJobId);
+        doc.Title.Should().Be("Nhan vien kinh doanh");
+        doc.CompanyName.Should().Be("Cong ty ABC");
+        doc.Location.Should().Be("Ha Noi");
+        doc.SalaryMin.Should().Be(5_500_000m);
+        doc.SalaryMax.Should().Be(7_000_000m);
+        doc.Currency.Should().Be("VND");
+        doc.Description.Should().Be("Mo ta cong viec");
+        doc.Requirements.Should().BeNull();
+        doc.CategoryName.Should().Be("Kinh doanh");
+        doc.EmploymentType.Should().BeEmpty();
+        doc.Status.Should().Be("Active");
+        doc.CreatedAt.Should().Be(new DateTime(2026, 11, 15, 8, 0, 0, DateTimeKind.Utc));
+        cache.LastInvalidated.Should().Be(ExternalJobId);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_ExternalJobReplay_KeepsCreatedAtAndSkills()
+    {
+        var (consumer, search, _) = BuildConsumer();
+        var originalCreatedAt = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        search.Existing[ExternalJobId] = new JobDocument
+        {
+            Id = ExternalJobId,
+            CreatedAt = originalCreatedAt,
+            Skills = new List<string> { "csharp" },
+        };
+
+        var outcome = await consumer.HandleAsync(ExternalJobId, ExternalGoldenJson);
+
+        outcome.Should().Be(MessageOutcome.Handled);
+        search.LastIndexed!.CreatedAt.Should().Be(originalCreatedAt);
+        search.LastIndexed.Skills.Should().ContainSingle().Which.Should().Be("csharp");
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_ExternalJobIdNotSha256OfSourceUrl_SkipsWithoutIndexing()
+    {
+        var (consumer, search, _) = BuildConsumer();
+        var tampered = ExternalGoldenJson.Replace(ExternalJobId, new string('0', 64));
+
+        var outcome = await consumer.HandleAsync(new string('0', 64), tampered);
+
+        outcome.Should().Be(MessageOutcome.Skip);
+        search.IndexCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_ExternalJobWithoutTitle_SkipsWithoutIndexing()
+    {
+        var (consumer, search, _) = BuildConsumer();
+        var noTitle = ExternalGoldenJson.Replace("\"title\": \"Nhan vien kinh doanh\"", "\"title\": \" \"");
+
+        var outcome = await consumer.HandleAsync(ExternalJobId, noTitle);
+
+        outcome.Should().Be(MessageOutcome.Skip);
+        search.IndexCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task HandleMessageAsync_ExternalJobIndexFails_RetriesMessage()
+    {
+        var (consumer, search, cache) = BuildConsumer();
+        search.IndexResult = false;
+
+        var outcome = await consumer.HandleAsync(ExternalJobId, ExternalGoldenJson);
+
+        outcome.Should().Be(MessageOutcome.Retry);
+        cache.LastInvalidated.Should().BeNull();
+    }
+
     private static string Serialize<T>(EventEnvelope<T> envelope) =>
         JsonSerializer.Serialize(envelope, KafkaJson.Options);
 
