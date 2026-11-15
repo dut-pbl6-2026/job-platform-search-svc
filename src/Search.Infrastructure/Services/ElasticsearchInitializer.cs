@@ -1,6 +1,8 @@
 using Elastic.Clients.Elasticsearch;
+using Elastic.Clients.Elasticsearch.Mapping;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Search.Core.Interfaces;
 using Search.Core.Models;
 using Search.Infrastructure.Configuration;
 
@@ -10,15 +12,18 @@ public class ElasticsearchInitializer
 {
     private readonly ElasticsearchClient _client;
     private readonly ElasticsearchOptions _options;
+    private readonly IEmbeddingClient _embeddings;
     private readonly ILogger<ElasticsearchInitializer> _logger;
 
     public ElasticsearchInitializer(
         ElasticsearchClient client,
         IOptions<ElasticsearchOptions> options,
+        IEmbeddingClient embeddings,
         ILogger<ElasticsearchInitializer> logger)
     {
         _client = client;
         _options = options.Value;
+        _embeddings = embeddings;
         _logger = logger;
     }
 
@@ -33,9 +38,13 @@ public class ElasticsearchInitializer
         // of attempting a create with a misleading error (review B-3).
         var existsResponse = await _client.Indices.ExistsAsync(indexName, cancellationToken);
         var existsStatus = existsResponse.ApiCallDetails?.HttpStatusCode;
+        // The vector size comes from the running model, never from config: a mismatch makes every write fail.
+        var model = await _embeddings.GetModelInfoAsync(cancellationToken);
+
         if (existsStatus == 200)
         {
             _logger.LogInformation("Elasticsearch index '{IndexName}' already exists.", indexName);
+            await VerifyEmbeddingDimensionAsync(indexName, model.Dimension, cancellationToken);
             return;
         }
 
@@ -105,6 +114,11 @@ public class ElasticsearchInitializer
                     .Text(t => t.Requirements!, f => f.Analyzer("vietnamese_icu"))
                     .Text(t => t.Benefits!, f => f.Analyzer("vietnamese_icu"))
                     .Keyword(k => k.Skills, k => k.Normalizer("lowercase_normalizer"))
+                    // Cosine over unit-length vectors (ai-svc normalises). Filled from the embedding service, not the document model.
+                    .DenseVector("embedding", d => d
+                        .Dims(model.Dimension)
+                        .Index(true)
+                        .Similarity("cosine"))
                 )
             ), cancellationToken);
 
@@ -114,6 +128,34 @@ public class ElasticsearchInitializer
             throw new InvalidOperationException($"Failed to create Elasticsearch index '{indexName}': {createResponse.ElasticsearchServerError?.Error.Reason ?? createResponse.DebugInformation}");
         }
 
-        _logger.LogInformation("Elasticsearch index '{IndexName}' created successfully.", indexName);
+        _logger.LogInformation(
+            "Elasticsearch index '{IndexName}' created successfully (embedding model '{Model}', {Dimension} dims).",
+            indexName, model.Model, model.Dimension);
+    }
+
+    private async Task VerifyEmbeddingDimensionAsync(string indexName, int expectedDims, CancellationToken cancellationToken)
+    {
+        var mapping = await _client.Indices.GetMappingAsync(r => r.Indices(indexName), cancellationToken);
+        if (!mapping.IsValidResponse)
+        {
+            throw new InvalidOperationException(
+                $"Failed to read the mapping of '{indexName}': {mapping.DebugInformation}");
+        }
+
+        var properties = mapping.Indices.Values.FirstOrDefault()?.Mappings.Properties;
+        int? dims = null;
+        if (properties is not null
+            && ((IDictionary<PropertyName, IProperty>)properties).TryGetValue("embedding", out var property)
+            && property is DenseVectorProperty vector)
+        {
+            dims = vector.Dims;
+        }
+
+        if (dims != expectedDims)
+        {
+            throw new InvalidOperationException(
+                $"Index '{indexName}' has no dense_vector 'embedding' of {expectedDims} dims. " +
+                "The mapping cannot change in place: create a new index name (ELASTICSEARCH_INDEX) and reindex.");
+        }
     }
 }

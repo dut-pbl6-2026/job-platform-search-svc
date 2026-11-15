@@ -373,6 +373,9 @@ public class JobEventsConsumerTests
         public Dictionary<string, JobDocument> Existing { get; } = new();
         public bool GetFails { get; set; }
 
+        public Task<IReadOnlyList<SemanticJobHit>> SearchSemanticAsync(string text, int size, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<SemanticJobHit>>(Array.Empty<SemanticJobHit>());
+
         public Task<JobDocument?> GetJobAsync(string jobId, CancellationToken cancellationToken = default) =>
             GetFails
                 ? throw new InvalidOperationException("ES down")

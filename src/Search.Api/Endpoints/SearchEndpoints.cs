@@ -7,6 +7,9 @@ namespace Search.Api.Endpoints;
 
 public static class SearchEndpoints
 {
+    private const int MaxSemanticQueryLength = 500;
+    private const int MaxSemanticSize = 20;
+
     public static void MapSearchEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/search")
@@ -119,6 +122,65 @@ public static class SearchEndpoints
         .WithSummary("Search jobs with full-text keywords, location and filters")
         .Produces<JobSearchResponseDto>(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest);
+
+        // GET /api/search/jobs/semantic: kNN over the job embeddings. Only Active jobs; no keyword or filter parameters yet.
+        group.MapGet("/jobs/semantic", async (
+            [FromQuery] string? q,
+            [FromQuery] int size = 10,
+            [FromServices] ISearchService searchService = null!,
+            CancellationToken cancellationToken = default) =>
+        {
+            var text = q?.Trim();
+            if (string.IsNullOrEmpty(text))
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Missing query parameter",
+                    Detail = "Query parameter 'q' is required for semantic search."
+                });
+            }
+
+            if (text.Length > MaxSemanticQueryLength)
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Query too long",
+                    Detail = $"Query must be at most {MaxSemanticQueryLength} characters."
+                });
+            }
+
+            if (size < 1 || size > MaxSemanticSize)
+            {
+                return Results.BadRequest(new ProblemDetails
+                {
+                    Status = StatusCodes.Status400BadRequest,
+                    Title = "Invalid page size",
+                    Detail = $"Size must be between 1 and {MaxSemanticSize}."
+                });
+            }
+
+            try
+            {
+                var hits = await searchService.SearchSemanticAsync(text, size, cancellationToken);
+                return Results.Ok(new SemanticSearchResponseDto(
+                    hits.Select(h => new SemanticJobDto(h.Score, h.Job)).ToList()));
+            }
+            catch (EmbeddingUnavailableException)
+            {
+                // No keyword fallback: a silent switch would return different results without saying so.
+                return Results.Problem(
+                    statusCode: StatusCodes.Status503ServiceUnavailable,
+                    title: "Semantic search unavailable",
+                    detail: "The embedding service is unavailable. Retry later.");
+            }
+        })
+        .WithName("SemanticSearchJobs")
+        .WithSummary("Search jobs by meaning (embedding similarity)")
+        .Produces<SemanticSearchResponseDto>(StatusCodes.Status200OK)
+        .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status503ServiceUnavailable);
 
         // GET /api/search/suggest (SRS 3.4.3)
         group.MapGet("/suggest", async (

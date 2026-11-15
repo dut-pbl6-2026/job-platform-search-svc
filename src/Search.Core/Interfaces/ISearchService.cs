@@ -5,6 +5,8 @@ namespace Search.Core.Interfaces;
 public interface ISearchService
 {
     Task<SearchResult<JobDocument>> SearchJobsAsync(SearchQuery query, CancellationToken cancellationToken = default);
+    /// <summary>kNN over the job embeddings; the query text is embedded first. Throws <see cref="EmbeddingUnavailableException"/>.</summary>
+    Task<IReadOnlyList<SemanticJobHit>> SearchSemanticAsync(string text, int size, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<string>> SuggestAsync(string prefix, int limit = 10, CancellationToken cancellationToken = default);
     /// <summary>Current indexed document, or null when it does not exist. Throws when ES fails.</summary>
     Task<JobDocument?> GetJobAsync(string jobId, CancellationToken cancellationToken = default);

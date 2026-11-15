@@ -34,6 +34,7 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 ## SRS mapping (SEARCH-01)
 
 - `GET /api/search/jobs?q={keyword}&location={city}&minSalary={n}&maxSalary={n}&skills={s1,s2}&skillOp={or|and}&page={0}&size={20}` — full-text search with relevance scoring + filters (salary overlap, location, skills `skillOp=or` default / `and`, category, CSV multi-value employmentType/experienceLevel = OR), pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`.
+- `GET /api/search/jobs/semantic?q={text}&size={1-20}` — kNN over the job embeddings (Active jobs only, no keyword or filters). Returns `{ items: [{ score, job }] }`, most similar first, no paging. 503 when the embedding service is down; there is no keyword fallback.
 - `GET /api/search/suggest?q={prefix}` — autocomplete suggestions (top 5-10).
 - Searchable fields: `title` (text, searchable+sortable), `description` (text, searchable), `company` (text, searchable+filterable+sortable), `location` (text, searchable+filterable+sortable), `salary_min/max` (numeric, filterable range), `category` (keyword, filterable+sortable), `employment_type` (keyword, filterable+sortable), `created_at` (date, sortable).
 - Handle empty results gracefully: 200 OK with message "No jobs found matching your criteria".
@@ -42,8 +43,9 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 
 - ES `8.13.2` single-node `http://localhost:9200` (`xpack.security.enabled=false`), index name `jobs` (`ELASTICSEARCH_INDEX` env var).
 - Index mapping: text fields (`title`, `description`, `company_name`, `location`, `requirements`, `benefits`) use custom analyzer `vietnamese_icu` (`icu_tokenizer` + `icu_folding` — accent/case folding so typing without diacritics matches accented docs). Requires `analysis-icu` plugin in the custom ES image (`job-platform-infra/docker/es`, W6). `title`/`company_name`/`location` keep `.raw` keyword subfield for exact sort/filter.
+- `embedding` → `dense_vector` (dims from ai-svc `GET /api/internal/embed/info` at startup, cosine, indexed). Written by search-svc for every document, from `JobEmbeddingText` (title, skills, description; first 55 words, the same cap as ai-svc chunks). A write whose embedding fails is not stored (`IndexJobAsync` returns false, bulk indexes nothing). An existing index whose `embedding` dims differ fails startup.
 - `salary_min/max` → double, `category` → keyword, `employment_type` → keyword, `experience_level` → keyword, `status` → keyword, `recruiter_id` → keyword, `skills` → keyword (list, `lowercase_normalizer` so term filter is case-insensitive), `created_at/updated_at` → date.
-- **Reindex note:** changing analyzer/mapping only applies when the index is created. Bump `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) so the initializer creates a fresh index with the new mapping; then re-ingest (crawler/seed/HTTP sync). Never edit an existing index's analyzer in place.
+- **Reindex note:** changing analyzer/mapping only applies when the index is created. Bump `ELASTICSEARCH_INDEX` (e.g. `jobs` → `jobs_v2`) so the initializer creates a fresh index with the new mapping; then copy the documents with `scripts/reindex_jobs.py` (`SOURCE_INDEX` = the old index; it posts through `/api/search/bulk-index` so every document gets its embedding). Never edit an existing index's mapping in place.
 - `PERF-02 search p95<200ms` — keep queries efficient, avoid deep pagination (`from+size`), prefer `search_after` for large offsets. Endpoint guard: `page * size > 500` returns 400. Measure with `python scripts/benchmark.py` — primary metric: cold (cache miss), `N=100`, `concurrency=1`; `--warm` measures the Redis cache-hit path (< 20ms); `SEARCH_URL` env first, `localhost:5003` is only the dev fallback. PERF-02 pending measured sign-off (see README Performance section for the run guide and results table).
 
 ## Events — consumer (SRS 8.5)
@@ -82,7 +84,7 @@ var indexName = builder.Configuration["ELASTICSEARCH_INDEX"]
 - `appsettings.json` MAY contain **placeholder comments** like `"<set via env>"` but MUST NOT contain real URLs, hostnames, or credentials.
 - `appsettings.Development.json` MAY point to `localhost` **only** for local-dev convenience; never commit real passwords.
 - The single source of truth for all env values is `../job-platform-infra/envs/.env.dev.example` — use `mise run sync-env` to pull it.
-- Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `JWT_SECRET`.
+- Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `JWT_SECRET`, `AI_SERVICE_URL`, `INTERNAL_SERVICE_TOKEN` (bearer for ai-svc `/api/internal/embed`; unset => every embedding call fails).
 
 ## 2026 best practice (NFR `MAINT`)
 

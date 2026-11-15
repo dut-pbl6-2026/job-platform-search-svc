@@ -1,6 +1,9 @@
 using Elastic.Clients.Elasticsearch;
+using Elastic.Clients.Elasticsearch.Core.Search;
 using Elastic.Clients.Elasticsearch.QueryDsl;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using Search.Core.Interfaces;
 using Search.Core.Models;
@@ -12,15 +15,22 @@ public class ElasticsearchService : ISearchService
 {
     private readonly ElasticsearchClient _client;
     private readonly ElasticsearchOptions _options;
+    private readonly IEmbeddingClient _embeddings;
     private readonly ILogger<ElasticsearchService> _logger;
+
+    // kNN candidates per returned hit: higher is more accurate and slower (ES num_candidates).
+    private const int SemanticCandidatesPerHit = 10;
+    private const int SemanticMinCandidates = 100;
 
     public ElasticsearchService(
         ElasticsearchClient client,
         IOptions<ElasticsearchOptions> options,
+        IEmbeddingClient embeddings,
         ILogger<ElasticsearchService> logger)
     {
         _client = client;
         _options = options.Value;
+        _embeddings = embeddings;
         _logger = logger;
     }
 
@@ -133,6 +143,7 @@ public class ElasticsearchService : ISearchService
             .Index(_options.Index)
             .From(query.From)
             .Size(query.NormalizedSize)
+            .Source(new SourceConfig(new SourceFilter { Excludes = "embedding" }))
             .Query(q => q
                 .Bool(b =>
                 {
@@ -170,6 +181,36 @@ public class ElasticsearchService : ISearchService
 
         var items = response.Documents.ToList();
         return SearchResult<JobDocument>.Create(items, total, query.NormalizedPage, query.NormalizedSize);
+    }
+
+    public async Task<IReadOnlyList<SemanticJobHit>> SearchSemanticAsync(string text, int size, CancellationToken cancellationToken = default)
+    {
+        var vector = (await _embeddings.EmbedAsync([text], cancellationToken))[0];
+
+        var response = await _client.SearchAsync<JobDocument>(s => s
+            .Index(_options.Index)
+            .Size(size)
+            .Knn(k => k
+                .Field("embedding")
+                .QueryVector(vector)
+                .k(size)
+                .NumCandidates(Math.Max(SemanticMinCandidates, size * SemanticCandidatesPerHit))
+                // Pre-filter: post-filtering would return fewer than k hits for a selective filter.
+                .Filter([new TermQuery(Infer.Field<JobDocument>(f => f.Status)) { Value = "Active" }])
+            )
+            .Source(new SourceConfig(new SourceFilter { Excludes = "embedding" })),
+            cancellationToken);
+
+        if (!response.IsValidResponse)
+        {
+            _logger.LogError("Elasticsearch kNN query failed: {DebugInfo}", response.DebugInformation);
+            throw new InvalidOperationException($"Semantic search failed: {response.ElasticsearchServerError?.Error.Reason ?? response.DebugInformation}");
+        }
+
+        return response.Hits
+            .Where(h => h.Source is not null)
+            .Select(h => new SemanticJobHit(h.Source!, (float)(h.Score ?? 0)))
+            .ToList();
     }
 
     public async Task<IReadOnlyList<string>> SuggestAsync(string prefix, int limit = 10, CancellationToken cancellationToken = default)
@@ -215,6 +256,33 @@ public class ElasticsearchService : ISearchService
 
     private Refresh WriteRefresh => _options.RefreshOnWrite ? Refresh.WaitFor : Refresh.False;
 
+    /// <summary>
+    /// Documents with their embedding. Called after the merge, so the text includes the skills that
+    /// Kafka events do not carry. Null when the embedding service fails: nothing is written without a vector.
+    /// </summary>
+    private async Task<JsonNode[]?> ToIndexBodiesAsync(IReadOnlyList<JobDocument> documents, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<float[]> vectors;
+        try
+        {
+            vectors = await _embeddings.EmbedAsync(documents.Select(JobEmbeddingText.From).ToArray(), cancellationToken);
+        }
+        catch (EmbeddingUnavailableException ex)
+        {
+            _logger.LogError(ex, "Embedding unavailable; {Count} job(s) not indexed.", documents.Count);
+            return null;
+        }
+
+        return documents
+            .Select((doc, i) =>
+            {
+                var body = JsonSerializer.SerializeToNode(doc)!.AsObject();
+                body["embedding"] = JsonSerializer.SerializeToNode(vectors[i]);
+                return (JsonNode)body;
+            })
+            .ToArray();
+    }
+
     private static SortOptionsDescriptor<JobDocument> ApplySorting(SortOptionsDescriptor<JobDocument> sort, SearchQuery query)
     {
         return query.SortBy?.ToLowerInvariant() switch
@@ -251,7 +319,11 @@ public class ElasticsearchService : ISearchService
         if (string.IsNullOrWhiteSpace(document.Id))
             throw new ArgumentException("JobDocument.Id must not be empty.", nameof(document));
 
-        var response = await _client.IndexAsync(document, _options.Index, idx => idx
+        var bodies = await ToIndexBodiesAsync([document], cancellationToken);
+        if (bodies is null)
+            return false;
+
+        var response = await _client.IndexAsync(bodies[0], _options.Index, idx => idx
             .Id(document.Id)
             .Refresh(WriteRefresh),
             cancellationToken);
@@ -272,9 +344,13 @@ public class ElasticsearchService : ISearchService
         if (docList.Count == 0)
             return 0;
 
+        var bodies = await ToIndexBodiesAsync(docList, cancellationToken);
+        if (bodies is null)
+            return 0;
+
         var response = await _client.BulkAsync(b => b
             .Index(_options.Index)
-            .IndexMany(docList, (descriptor, doc) => descriptor.Id(doc.Id))
+            .IndexMany(bodies, (descriptor, body) => descriptor.Id(body["id"]!.GetValue<string>()))
             .Refresh(WriteRefresh),
             cancellationToken);
 
