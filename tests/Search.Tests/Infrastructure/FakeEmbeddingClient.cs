@@ -3,7 +3,7 @@ using Search.Core.Interfaces;
 namespace Search.Tests.Infrastructure;
 
 /// <summary>Deterministic vectors: [text length, 1, 0]. Records every batch it was asked to embed.</summary>
-internal sealed class FakeEmbeddingClient : IEmbeddingClient
+public sealed class FakeEmbeddingClient : IEmbeddingClient
 {
     public int Dimension { get; init; } = 3;
     public bool Fail { get; set; }

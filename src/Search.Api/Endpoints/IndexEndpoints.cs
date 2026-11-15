@@ -12,7 +12,9 @@ public static class IndexEndpoints
 {
     public const string IndexTokenConfigKey = "SEARCH_INDEX_TOKEN";
     private const string IndexTokenHeader = "X-Internal-Token";
-    private const long MaxBulkBodyBytes = 5_000_000;
+
+    // Upper bound for any index write body (single job or bulk array), enforced while reading.
+    public const long MaxIndexBodyBytes = 5_000_000;
 
     // Trimmed token, or null when unset. Program.cs uses the same value to fail startup.
     public static string? ConfiguredIndexToken(IConfiguration configuration) =>
@@ -45,13 +47,31 @@ public static class IndexEndpoints
             });
 
         // POST /api/search/index
+        // Same as bulk-index: the body is read and bounded here, not bound by the framework, so an
+        // unauthorized or oversized request never reaches the JSON parser.
         group.MapPost("/index", async (
-            [FromBody] JobSyncDto dto,
+            HttpContext httpContext,
             [FromServices] ISearchService searchService,
             [FromServices] ISearchCache cache,
             CancellationToken cancellationToken) =>
         {
-            if (string.IsNullOrWhiteSpace(dto.Id) || string.IsNullOrWhiteSpace(dto.Title))
+            var body = await ReadBoundedBodyAsync(httpContext.Request, MaxIndexBodyBytes, cancellationToken);
+            if (body is null)
+            {
+                return PayloadTooLarge();
+            }
+
+            JobSyncDto? dto;
+            try
+            {
+                dto = JsonSerializer.Deserialize<JobSyncDto>(body, JsonSerializerOptions.Web);
+            }
+            catch (JsonException)
+            {
+                return InvalidJson("Request body must be a JSON job document.");
+            }
+
+            if (dto is null || string.IsNullOrWhiteSpace(dto.Id) || string.IsNullOrWhiteSpace(dto.Title))
             {
                 return Results.BadRequest(new ProblemDetails
                 {
@@ -86,8 +106,10 @@ public static class IndexEndpoints
         })
         .WithName("IndexJob")
         .WithSummary("Index or update a job document in Elasticsearch")
+        .Accepts<JobSyncDto>("application/json")
         .Produces(StatusCodes.Status200OK)
         .ProducesProblem(StatusCodes.Status400BadRequest)
+        .ProducesProblem(StatusCodes.Status413PayloadTooLarge)
         .ProducesProblem(StatusCodes.Status500InternalServerError);
 
         // POST /api/search/bulk-index
@@ -99,12 +121,10 @@ public static class IndexEndpoints
             [FromServices] ISearchCache cache,
             CancellationToken cancellationToken) =>
         {
-            var body = await ReadBoundedBodyAsync(httpContext.Request, MaxBulkBodyBytes, cancellationToken);
+            var body = await ReadBoundedBodyAsync(httpContext.Request, MaxIndexBodyBytes, cancellationToken);
             if (body is null)
             {
-                return Results.Json(
-                    new { message = $"Bulk payload exceeds {MaxBulkBodyBytes} bytes." },
-                    statusCode: StatusCodes.Status413PayloadTooLarge);
+                return PayloadTooLarge();
             }
 
             List<JobSyncDto>? dtos;
@@ -114,12 +134,7 @@ public static class IndexEndpoints
             }
             catch (JsonException)
             {
-                return Results.BadRequest(new ProblemDetails
-                {
-                    Status = StatusCodes.Status400BadRequest,
-                    Title = "Invalid JSON",
-                    Detail = "Request body must be a JSON array of job documents."
-                });
+                return InvalidJson("Request body must be a JSON array of job documents.");
             }
 
             if (dtos == null || dtos.Count == 0)
@@ -198,9 +213,20 @@ public static class IndexEndpoints
         .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 
+    private static IResult PayloadTooLarge() => Results.Json(
+        new { message = $"Payload exceeds {MaxIndexBodyBytes} bytes." },
+        statusCode: StatusCodes.Status413PayloadTooLarge);
+
+    private static IResult InvalidJson(string detail) => Results.BadRequest(new ProblemDetails
+    {
+        Status = StatusCodes.Status400BadRequest,
+        Title = "Invalid JSON",
+        Detail = detail
+    });
+
     // Reads at most limit bytes whatever Content-Length says (absent for chunked bodies).
-    // Returns null when the body is larger.
-    private static async Task<byte[]?> ReadBoundedBodyAsync(HttpRequest request, long limit, CancellationToken cancellationToken)
+    // Returns null when the body is larger. Public so the size rule can be unit tested directly.
+    public static async Task<byte[]?> ReadBoundedBodyAsync(HttpRequest request, long limit, CancellationToken cancellationToken)
     {
         if (request.ContentLength > limit)
         {
