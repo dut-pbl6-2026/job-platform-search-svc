@@ -40,6 +40,7 @@ public static class ElasticsearchServiceExtensions
             o.Enabled = Bool(configuration["SEARCH_HYBRID_ENABLED"] ?? configuration["Search:Hybrid:Enabled"], true);
             o.KeywordWeight = Double(configuration["SEARCH_HYBRID_KEYWORD_WEIGHT"] ?? configuration["Search:Hybrid:KeywordWeight"], 0.4);
             o.VectorWeight = Double(configuration["SEARCH_HYBRID_VECTOR_WEIGHT"] ?? configuration["Search:Hybrid:VectorWeight"], 0.6);
+            o.MinVectorScore = Double(configuration["SEARCH_HYBRID_MIN_VECTOR_SCORE"] ?? configuration["Search:Hybrid:MinVectorScore"], 0.72);
             o.CandidateMultiplier = Int(configuration["SEARCH_HYBRID_CANDIDATE_MULTIPLIER"] ?? configuration["Search:Hybrid:CandidateMultiplier"], 3);
             o.MaxCandidates = Int(configuration["SEARCH_HYBRID_MAX_CANDIDATES"] ?? configuration["Search:Hybrid:MaxCandidates"], 600);
         });

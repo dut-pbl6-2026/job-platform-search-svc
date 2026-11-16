@@ -92,6 +92,7 @@ public class HybridSearchOptionsTests
         options.Enabled.Should().BeTrue();
         options.KeywordWeight.Should().Be(0.4);
         options.VectorWeight.Should().Be(0.6);
+        options.MinVectorScore.Should().Be(0.72);
         options.Validate();
     }
 
@@ -106,7 +107,8 @@ public class HybridSearchOptionsTests
                 { "SEARCH_HYBRID_ENABLED", "false" },
                 { "SEARCH_HYBRID_KEYWORD_WEIGHT", "0.7" },
                 { "SEARCH_HYBRID_VECTOR_WEIGHT", "0.3" },
-                { "SEARCH_HYBRID_MAX_CANDIDATES", "120" }
+                { "SEARCH_HYBRID_MAX_CANDIDATES", "120" },
+                { "SEARCH_HYBRID_MIN_VECTOR_SCORE", "0.8" }
             })
             .Build();
 
@@ -119,6 +121,7 @@ public class HybridSearchOptionsTests
         options.KeywordWeight.Should().Be(0.7);
         options.VectorWeight.Should().Be(0.3);
         options.MaxCandidates.Should().Be(120);
+        options.MinVectorScore.Should().Be(0.8);
     }
 
     [Theory]
@@ -128,6 +131,18 @@ public class HybridSearchOptionsTests
     public void InvalidWeights_FailFast(double keyword, double vector)
     {
         var options = new HybridSearchOptions { KeywordWeight = keyword, VectorWeight = vector };
+
+        var act = options.Validate;
+
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(1.1)]
+    public void InvalidVectorFloor_FailsFast(double floor)
+    {
+        var options = new HybridSearchOptions { MinVectorScore = floor };
 
         var act = options.Validate;
 

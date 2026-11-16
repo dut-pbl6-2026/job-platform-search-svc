@@ -79,7 +79,8 @@ public class HybridSearchServiceTests
         invoker.Bodies.Should().HaveCount(2);
 
         var keywordBody = Parse(invoker.Bodies.Single(body => !HasKnn(body)));
-        keywordBody.GetProperty("query").GetProperty("bool").GetProperty("must").GetRawText().Should().Contain("multi_match");
+        var must = keywordBody.GetProperty("query").GetProperty("bool").GetProperty("must").GetRawText();
+        must.Should().Contain("multi_match").And.Contain("minimum_should_match");
         keywordBody.TryGetProperty("from", out _).Should().BeTrue();
 
         var knnBody = Parse(invoker.Bodies.Single(HasKnn));
@@ -161,17 +162,53 @@ public class HybridSearchServiceTests
     [Fact]
     public async Task FusedOrderAndPaging_ComeFromBothRankings()
     {
-        // BM25: a (10) > b (5). Vector: c (0.9) > b (0.7). Fused, default 40/60: c 0.6, a 0.4, b 0.
+        // BM25: a (10) > b (5). Vector: b (0.9) > a (0.7). Fused, default 40/60: b 0.6, a 0.4.
         var (service, _, _) = Build(body =>
-            HasKnn(body) ? Hits(("c", 0.9), ("b", 0.7)) : Hits(("a", 10), ("b", 5)));
+            HasKnn(body) ? Hits(("b", 0.9), ("a", 0.7)) : Hits(("a", 10), ("b", 5)));
 
-        var first = await service.SearchJobsAsync(new SearchQuery(Keyword: "Java", Page: 0, Size: 2));
-        first.Items.Select(job => job.Id).Should().Equal("c", "a");
-        first.Total.Should().Be(3);
+        var first = await service.SearchJobsAsync(new SearchQuery(Keyword: "Java", Page: 0, Size: 1));
+        first.Items.Select(job => job.Id).Should().Equal("b");
+        first.Total.Should().Be(2);
 
-        var second = await service.SearchJobsAsync(new SearchQuery(Keyword: "Java", Page: 1, Size: 2));
-        second.Items.Select(job => job.Id).Should().Equal("b");
-        second.Total.Should().Be(3);
+        var second = await service.SearchJobsAsync(new SearchQuery(Keyword: "Java", Page: 1, Size: 1));
+        second.Items.Select(job => job.Id).Should().Equal("a");
+        second.Total.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task VectorScores_ReRankKeywordMatchesButNeverAddJobs()
+    {
+        // b is a very strong semantic match but not a keyword match: it must not appear.
+        var (service, _, _) = Build(body =>
+            HasKnn(body) ? Hits(("a", 0.9), ("b", 0.95)) : Hits(("a", 10)));
+
+        var result = await service.SearchJobsAsync(new SearchQuery(Keyword: "Java"));
+
+        result.Items.Select(job => job.Id).Should().Equal("a");
+        result.Total.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SemanticOnlyResults_RequireTheVectorFloor()
+    {
+        var (service, _, _) = Build(body =>
+            HasKnn(body) ? Hits(("strong", 0.80), ("weak", 0.70)) : Hits());
+
+        var result = await service.SearchJobsAsync(new SearchQuery(Keyword: "không có từ này"));
+
+        result.Items.Select(job => job.Id).Should().Equal("strong");
+        result.Total.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task NoKeywordMatchAndNoStrongVector_ReturnsEmpty()
+    {
+        var (service, _, _) = Build(body => HasKnn(body) ? Hits(("weak", 0.60)) : Hits());
+
+        var result = await service.SearchJobsAsync(new SearchQuery(Keyword: "zzzxx"));
+
+        result.Items.Should().BeEmpty();
+        result.Total.Should().Be(0);
     }
 
     [Fact]

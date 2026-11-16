@@ -147,7 +147,21 @@ public class ElasticsearchService : ISearchService
             vectorHits = Array.Empty<ScoredJob>();
         }
 
-        var fused = HybridFusion.Fuse(keywordHits, vectorHits, _hybrid.KeywordWeight, _hybrid.VectorWeight);
+        // Vector scores re-rank keyword matches. They only *add* a job when the keyword side found
+        // nothing at all and the semantic match clears the floor; otherwise every query would return
+        // the whole index reordered (the MiniLM score of an unrelated job is only ~0.1 below a real hit).
+        IReadOnlyList<ScoredJob> vectorForFusion;
+        if (keywordHits.Count == 0)
+        {
+            vectorForFusion = vectorHits.Where(hit => hit.Score >= _hybrid.MinVectorScore).ToList();
+        }
+        else
+        {
+            var keywordIds = keywordHits.Select(hit => hit.Job.Id).ToHashSet(StringComparer.Ordinal);
+            vectorForFusion = vectorHits.Where(hit => keywordIds.Contains(hit.Job.Id)).ToList();
+        }
+
+        var fused = HybridFusion.Fuse(keywordHits, vectorForFusion, _hybrid.KeywordWeight, _hybrid.VectorWeight);
         var items = fused
             .Skip(query.From)
             .Take(query.NormalizedSize)
@@ -161,8 +175,8 @@ public class ElasticsearchService : ISearchService
 
         var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         _logger.LogInformation(
-            "Hybrid search: pool={Pool} keywordHits={KeywordHits} keywordTotal={KeywordTotal} vectorHits={VectorHits} elapsedMs={ElapsedMs:F0}",
-            pool, keywordHits.Count, keywordTotal, vectorHits.Count, elapsedMs);
+            "Hybrid search: pool={Pool} keywordHits={KeywordHits} keywordTotal={KeywordTotal} vectorHits={VectorHits} admitted={Admitted} elapsedMs={ElapsedMs:F0}",
+            pool, keywordHits.Count, keywordTotal, vectorHits.Count, vectorForFusion.Count, elapsedMs);
 
         if (total == 0)
             return SearchResult<JobDocument>.Empty(query.NormalizedPage, query.NormalizedSize);
@@ -261,7 +275,11 @@ public class ElasticsearchService : ISearchService
             Infer.Field<JobDocument>(f => f.Description, 1.0),
             Infer.Field<JobDocument>(f => f.Requirements!, 0.8)
         })
-        .Fuzziness(new Fuzziness("AUTO"));
+        .Fuzziness(new Fuzziness("AUTO"))
+        // Every word must appear: OR matching made a query like "công nghệ thông tin" hit every job
+        // because "công" is in every description. Multi-concept phrases that match nothing fall back
+        // to the vector side in HybridSearchAsync.
+        .MinimumShouldMatch("100%");
 
     /// <summary>Filters shared by the BM25 and kNN retrievers (and the pre-hybrid single query).</summary>
     private static IReadOnlyList<Query> BuildFilters(SearchQuery query)
