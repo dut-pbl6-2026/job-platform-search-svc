@@ -110,8 +110,12 @@ public class ApiContractTests : IClassFixture<SearchApiFactory>
     {
         var client = _factory.CreateClient();
         await PostRawAsync(client, "/api/search/index",
-            """{"id":"job-c-7","title":"Envelope","description":"Desc","companyName":"Acme","location":"Ha Noi"}""",
+            """{"id":"job-c-7","title":"Envelope","description":"Desc","companyName":"Acme","location":"Ha Noi","recruiterId":"11111111-1111-1111-1111-111111111111"}""",
             IndexToken);
+
+        // The index keeps the recruiter for internal paths; the public response must not.
+        StoredDocument("job-c-7").GetProperty("recruiter_id").GetString()
+            .Should().Be("11111111-1111-1111-1111-111111111111");
 
         var json = await GetJsonAsync(client, "/api/search/jobs?q=envelope");
 
@@ -130,6 +134,7 @@ public class ApiContractTests : IClassFixture<SearchApiFactory>
         item.GetProperty("skills").ValueKind.Should().Be(JsonValueKind.Array);
         item.GetProperty("createdAt").ValueKind.Should().Be(JsonValueKind.String);
         item.TryGetProperty("company_name", out _).Should().BeFalse("API responses use camelCase names");
+        item.TryGetProperty("recruiterId", out _).Should().BeFalse("anonymous search must not expose internal user ids");
     }
 
     [Fact]
@@ -149,6 +154,7 @@ public class ApiContractTests : IClassFixture<SearchApiFactory>
         job.GetProperty("id").GetString().Should().Be("job-c-8");
         job.EnumerateObject().Select(p => p.Name).Should().Contain(["companyName", "employmentType", "createdAt", "skills"]);
         job.TryGetProperty("company_name", out _).Should().BeFalse("API responses use camelCase names");
+        job.TryGetProperty("recruiterId", out _).Should().BeFalse("anonymous search must not expose internal user ids");
     }
 
     [Fact]

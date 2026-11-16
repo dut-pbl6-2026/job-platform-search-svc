@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Search.Api.DTOs;
 using Search.Core.Interfaces;
 using Search.Core.Models;
+using Search.Infrastructure.Configuration;
 
 namespace Search.Api.Endpoints;
 
@@ -16,9 +17,11 @@ public static class IndexEndpoints
     // Upper bound for any index write body (single job or bulk array), enforced while reading.
     public const long MaxIndexBodyBytes = 5_000_000;
 
-    // Trimmed token, or null when unset. Program.cs uses the same value to fail startup.
+    // Trimmed token, or null when unset. A template placeholder (__SET_VIA_INFISICAL__) counts as
+    // unset so a copied env file cannot open index writes with a public value. Program.cs uses the
+    // same value to fail startup.
     public static string? ConfiguredIndexToken(IConfiguration configuration) =>
-        configuration[IndexTokenConfigKey]?.Trim() is { Length: > 0 } token ? token : null;
+        SecretValue.Usable(configuration[IndexTokenConfigKey]);
 
     public static void MapIndexEndpoints(this IEndpointRouteBuilder app)
     {

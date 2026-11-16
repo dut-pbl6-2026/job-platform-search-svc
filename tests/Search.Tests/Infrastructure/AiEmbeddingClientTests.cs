@@ -135,6 +135,7 @@ public class AiEmbeddingClientTests
     [Theory]
     [InlineData("")]
     [InlineData("   ")]
+    [InlineData("__SET_VIA_INFISICAL__")]
     public async Task EmbedAsync_UnsetToken_FailsClosedWithoutCallingService(string token)
     {
         var handler = new StubHandler(EmbedEcho);

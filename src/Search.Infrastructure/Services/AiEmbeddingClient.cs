@@ -66,14 +66,15 @@ public class AiEmbeddingClient : IEmbeddingClient
             throw new EmbeddingUnavailableException("AI_SERVICE_URL is not configured.");
         }
 
-        if (string.IsNullOrWhiteSpace(_options.InternalToken))
+        var internalToken = SecretValue.Usable(_options.InternalToken);
+        if (internalToken is null)
         {
             throw new EmbeddingUnavailableException("AI_INTERNAL_TOKEN_FOR_SEARCH is not configured.");
         }
 
         using var request = new HttpRequestMessage(method, new Uri(baseUri, path))
         {
-            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", _options.InternalToken) },
+            Headers = { Authorization = new AuthenticationHeaderValue("Bearer", internalToken) },
             Content = payload is null ? null : JsonContent.Create(payload, options: JsonSerializerOptions.Web),
         };
 

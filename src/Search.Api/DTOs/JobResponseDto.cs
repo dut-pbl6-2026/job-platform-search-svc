@@ -5,6 +5,8 @@ namespace Search.Api.DTOs;
 /// <summary>
 /// API view of an indexed job. Properties use the default camelCase JSON naming of the API; the
 /// Elasticsearch document (<see cref="JobDocument"/>) keeps its snake_case index names.
+/// <c>recruiterId</c> is deliberately not exposed: search is anonymous, while the job API hides
+/// internal user ids from applicants. The indexed document keeps it for internal use.
 /// </summary>
 public record JobResponseDto(
     string Id,
@@ -21,7 +23,6 @@ public record JobResponseDto(
     string EmploymentType,
     string? ExperienceLevel,
     string Status,
-    string? RecruiterId,
     DateTime CreatedAt,
     DateTime UpdatedAt,
     DateTime? ExpiresAt,
@@ -45,7 +46,6 @@ public record JobResponseDto(
         EmploymentType: job.EmploymentType,
         ExperienceLevel: job.ExperienceLevel,
         Status: job.Status,
-        RecruiterId: job.RecruiterId,
         CreatedAt: job.CreatedAt,
         UpdatedAt: job.UpdatedAt,
         ExpiresAt: job.ExpiresAt,
