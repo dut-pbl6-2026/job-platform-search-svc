@@ -21,12 +21,19 @@ public class ElasticsearchServiceQueryTests
 
     private static async Task<JsonElement> SentFilters(SearchQuery query)
     {
-        byte[]? body = null;
+        var bodies = new List<byte[]>();
         var settings = new ElasticsearchClientSettings(
                 new SingleNodePool(new Uri("http://localhost:9200")),
                 new InMemoryRequestInvoker(Encoding.UTF8.GetBytes(EmptySearchResponse)))
             .DisableDirectStreaming()
-            .OnRequestCompleted(call => body = call.RequestBodyInBytes);
+            .OnRequestCompleted(call =>
+            {
+                if (call.RequestBodyInBytes is { } body)
+                {
+                    lock (bodies)
+                        bodies.Add(body);
+                }
+            });
         var service = new ElasticsearchService(
             new ElasticsearchClient(settings),
             Options.Create(new ElasticsearchOptions { Index = "jobs" }),
@@ -35,8 +42,16 @@ public class ElasticsearchServiceQueryTests
 
         await service.SearchJobsAsync(query);
 
-        body.Should().NotBeNull();
-        using var doc = JsonDocument.Parse(body!);
+        // A keyword query now sends two requests (BM25 + kNN); the filters live on the BM25 one.
+        byte[]? bm25;
+        lock (bodies)
+            bm25 = bodies.Single(b =>
+            {
+                using var parsed = JsonDocument.Parse(b);
+                return parsed.RootElement.TryGetProperty("query", out _);
+            });
+
+        using var doc = JsonDocument.Parse(bm25!);
         return doc.RootElement.GetProperty("query").GetProperty("bool").GetProperty("filter").Clone();
     }
 

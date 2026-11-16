@@ -2,6 +2,8 @@ using Elastic.Clients.Elasticsearch;
 using Elastic.Clients.Elasticsearch.Core.Search;
 using Elastic.Clients.Elasticsearch.QueryDsl;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using SourceFilter = Elastic.Clients.Elasticsearch.Core.Search.SourceFilter;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
@@ -15,6 +17,7 @@ public class ElasticsearchService : ISearchService
 {
     private readonly ElasticsearchClient _client;
     private readonly ElasticsearchOptions _options;
+    private readonly HybridSearchOptions _hybrid;
     private readonly IEmbeddingClient _embeddings;
     private readonly ILogger<ElasticsearchService> _logger;
 
@@ -26,134 +29,54 @@ public class ElasticsearchService : ISearchService
         ElasticsearchClient client,
         IOptions<ElasticsearchOptions> options,
         IEmbeddingClient embeddings,
-        ILogger<ElasticsearchService> logger)
+        ILogger<ElasticsearchService> logger,
+        IOptions<HybridSearchOptions>? hybrid = null)
     {
         _client = client;
         _options = options.Value;
+        _hybrid = hybrid?.Value ?? new HybridSearchOptions();
+        if (_hybrid.Enabled)
+            _hybrid.Validate();
         _embeddings = embeddings;
         _logger = logger;
     }
 
     public async Task<SearchResult<JobDocument>> SearchJobsAsync(SearchQuery query, CancellationToken cancellationToken = default)
     {
-        var mustClauses = new List<Action<QueryDescriptor<JobDocument>>>();
-        var filterClauses = new List<Action<QueryDescriptor<JobDocument>>>();
+        var keyword = string.IsNullOrWhiteSpace(query.Keyword) ? null : query.Keyword.Trim();
+        var filters = BuildFilters(query);
 
-        // 1. Keyword search with relevance scoring (SRS SEARCH-01-02)
-        if (!string.IsNullOrWhiteSpace(query.Keyword))
-        {
-            var keyword = query.Keyword.Trim();
-            mustClauses.Add(q => q
-                .MultiMatch(m => m
-                    .Query(keyword)
-                    .Fields(new[]
-                    {
-                        Infer.Field<JobDocument>(f => f.Title, 2.0),
-                        Infer.Field<JobDocument>(f => f.CompanyName, 1.5),
-                        Infer.Field<JobDocument>(f => f.Description, 1.0),
-                        Infer.Field<JobDocument>(f => f.Requirements!, 0.8)
-                    })
-                    .Fuzziness(new Fuzziness("AUTO"))
-                ));
-        }
+        // VECTOR-01-03/04: hybrid ranking only replaces relevance ranking. An explicit sort means the
+        // caller asked for an order (newest, salary), so vector scores would be ignored anyway.
+        var hybrid = _hybrid.Enabled && keyword is not null && IsRelevanceSort(query.SortBy);
 
-        // 2. Location filter — MatchPhrase for exact phrase matching (SRS SEARCH-01-03)
-        if (!string.IsNullOrWhiteSpace(query.Location))
-        {
-            var location = query.Location.Trim();
-            filterClauses.Add(q => q
-                .MatchPhrase(m => m
-                    .Field(f => f.Location)
-                    .Query(location)
-                ));
-        }
+        return hybrid
+            ? await HybridSearchAsync(query, keyword!, filters, cancellationToken)
+            : await SingleSearchAsync(query, keyword, filters, cancellationToken);
+    }
 
-        // 3. Status filter (Default: Active — matches backend JobStatus enum)
-        filterClauses.Add(q => q.Term(t => t.Field(f => f.Status).Value("Active")));
-
-        // 4. Category filter — use CategoryId (keyword) for exact match, not CategoryName (text)
-        if (!string.IsNullOrWhiteSpace(query.Category))
-        {
-            var cat = query.Category.Trim();
-            filterClauses.Add(q => q.Term(t => t.Field(f => f.CategoryId!).Value(cat)));
-        }
-
-        // 5. Employment Type filter — CSV "FullTime,PartTime" means any of them (OR),
-        //    same semantics as the skills filter (api-conventions §4).
-        var employmentTypes = query.EmploymentTypes;
-        if (employmentTypes.Count > 0)
-        {
-            var values = employmentTypes.Select(v => (FieldValue)v).ToArray();
-            filterClauses.Add(q => q.Terms(t => t
-                .Field(f => f.EmploymentType)
-                .Terms(new TermsQueryField(values))));
-        }
-
-        // 6. Experience Level filter — CSV, OR semantics.
-        var experienceLevels = query.ExperienceLevels;
-        if (experienceLevels.Count > 0)
-        {
-            var values = experienceLevels.Select(v => (FieldValue)v).ToArray();
-            filterClauses.Add(q => q.Terms(t => t
-                .Field(f => f.ExperienceLevel!)
-                .Terms(new TermsQueryField(values))));
-        }
-
-        // 7. Salary range filter (SRS 3.4.4)
-        //    Job has salary range [SalaryMin, SalaryMax].
-        //    Overlap: user's [min,max] must intersect with job's [min,max].
-        //    So: SalaryMax >= userMin AND SalaryMin <= userMax
-        if (query.MinSalary.HasValue)
-        {
-            filterClauses.Add(q => q.Range(new RangeQuery(
-                new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMax!))
-                { Gte = (double)query.MinSalary.Value })));
-        }
-        if (query.MaxSalary.HasValue)
-        {
-            filterClauses.Add(q => q.Range(new RangeQuery(
-                new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMin!))
-                { Lte = (double)query.MaxSalary.Value })));
-        }
-
-        // 8. Skills filter — skillOp=or (default): Terms, any requested skill matches.
-        //    skillOp=and: one Term filter per skill, the job must have all of them.
-        //    Field Skills is keyword with "lowercase_normalizer", so ES normalizes both
-        //    index and query values; no manual .ToLowerInvariant() needed here.
-        var skills = query.SkillList;
-        if (skills.Count > 0)
-        {
-            if (query.MatchAllSkills)
-            {
-                foreach (var skill in skills)
-                {
-                    filterClauses.Add(q => q.Term(t => t.Field(f => f.Skills).Value(skill)));
-                }
-            }
-            else
-            {
-                var values = skills.Select(s => (FieldValue)s).ToArray();
-                filterClauses.Add(q => q.Terms(t => t
-                    .Field(f => f.Skills)
-                    .Terms(new TermsQueryField(values))));
-            }
-        }
-
+    /// <summary>BM25 (or a plain filter browse when there is no keyword). The pre-hybrid behaviour.</summary>
+    private async Task<SearchResult<JobDocument>> SingleSearchAsync(
+        SearchQuery query,
+        string? keyword,
+        IReadOnlyList<Query> filters,
+        CancellationToken cancellationToken)
+    {
         var response = await _client.SearchAsync<JobDocument>(s => s
             .Index(_options.Index)
             .From(query.From)
             .Size(query.NormalizedSize)
-            .Source(new SourceConfig(new SourceFilter { Excludes = "embedding" }))
+            .Source(EmbeddingExcluded)
             .Query(q => q
                 .Bool(b =>
                 {
-                    if (mustClauses.Count > 0)
-                        b.Must(mustClauses.ToArray());
+                    if (keyword is not null)
+                        b.Must(m => m.MultiMatch(mm => KeywordFields(mm, keyword)));
                     else
                         b.Must(m => m.MatchAll(new MatchAllQuery()));
 
-                    if (filterClauses.Count > 0)
-                        b.Filter(filterClauses.ToArray());
+                    if (filters.Count > 0)
+                        b.Filter(filters.ToArray());
                 })
             )
             .Sort(sort => ApplySorting(sort, query)),
@@ -165,24 +88,295 @@ public class ElasticsearchService : ISearchService
             throw new InvalidOperationException($"Search failed: {response.ElasticsearchServerError?.Error.Reason ?? response.DebugInformation}");
         }
 
-        // Elastic.Clients.Elasticsearch 8.13.0 does not populate SearchResponse.Total
-        // from the hits.total union (it reads 0 even when documents are returned).
-        // Read the true total from HitsMetadata.Total (TotalHits.Value), falling back
-        // to the page hit count so pagination stays correct.
-        var total = response.HitsMetadata?.Total is { } totalHits
-            ? totalHits.Match(t => t.Value, l => l)
-            : response.Hits.Count;
-
-        // SRS SEARCH-01-05: Handle empty results gracefully (before materializing).
+        var total = TotalOf(response);
         if (total == 0)
-        {
             return SearchResult<JobDocument>.Empty(query.NormalizedPage, query.NormalizedSize);
-        }
 
         var items = response.Documents.ToList();
         return SearchResult<JobDocument>.Create(items, total, query.NormalizedPage, query.NormalizedSize);
     }
 
+    /// <summary>
+    /// VECTOR-01-03/04/05: fetch a candidate pool from BM25 and from kNN, fuse the two rankings with
+    /// the configured weights, then page the fused list. Filters are applied inside both retrievers,
+    /// so a filtered page never narrows after fusion. Any embedding failure falls back to BM25 only.
+    /// </summary>
+    private async Task<SearchResult<JobDocument>> HybridSearchAsync(
+        SearchQuery query,
+        string keyword,
+        IReadOnlyList<Query> filters,
+        CancellationToken cancellationToken)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var pool = HybridPoolSize(query);
+
+        float[] vector;
+        try
+        {
+            vector = (await _embeddings.EmbedAsync([keyword], cancellationToken))[0];
+        }
+        catch (EmbeddingUnavailableException ex)
+        {
+            // VECTOR-01-05: the embedding service is optional at query time; keyword search still answers.
+            _logger.LogWarning("Hybrid search fell back to keyword only: {Reason}", ex.Message);
+            return await SingleSearchAsync(query, keyword, filters, cancellationToken);
+        }
+
+        var keywordTask = KeywordCandidatesAsync(keyword, filters, pool, cancellationToken);
+        var vectorTask = VectorCandidatesAsync(vector, filters, pool, cancellationToken);
+
+        try
+        {
+            await Task.WhenAll(keywordTask, vectorTask);
+        }
+        catch
+        {
+            // Handled below: a broken keyword search is a real failure, a broken vector search is not.
+        }
+
+        var (keywordHits, keywordTotal) = await keywordTask;
+
+        IReadOnlyList<ScoredJob> vectorHits;
+        if (vectorTask.IsCompletedSuccessfully)
+        {
+            vectorHits = vectorTask.Result;
+        }
+        else
+        {
+            _logger.LogWarning(vectorTask.Exception, "Hybrid search fell back to keyword only: the kNN query failed.");
+            vectorHits = Array.Empty<ScoredJob>();
+        }
+
+        var fused = HybridFusion.Fuse(keywordHits, vectorHits, _hybrid.KeywordWeight, _hybrid.VectorWeight);
+        var items = fused
+            .Skip(query.From)
+            .Take(query.NormalizedSize)
+            .Select(hit => hit.Job)
+            .ToList();
+
+        // Both retrievers exhausted means the union is the whole result set (exact). Otherwise the
+        // fused total is only known for the candidate pool, and the BM25 total is the better estimate.
+        var exhausted = keywordTotal <= pool && vectorHits.Count < pool;
+        var total = exhausted ? fused.Count : Math.Max(keywordTotal, fused.Count);
+
+        var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _logger.LogInformation(
+            "Hybrid search: pool={Pool} keywordHits={KeywordHits} keywordTotal={KeywordTotal} vectorHits={VectorHits} elapsedMs={ElapsedMs:F0}",
+            pool, keywordHits.Count, keywordTotal, vectorHits.Count, elapsedMs);
+
+        if (total == 0)
+            return SearchResult<JobDocument>.Empty(query.NormalizedPage, query.NormalizedSize);
+
+        return SearchResult<JobDocument>.Create(items, total, query.NormalizedPage, query.NormalizedSize);
+    }
+
+    /// <summary>Top <paramref name="size"/> BM25 hits with their scores, plus the exact match total.</summary>
+    private async Task<(IReadOnlyList<ScoredJob> Hits, long Total)> KeywordCandidatesAsync(
+        string keyword,
+        IReadOnlyList<Query> filters,
+        int size,
+        CancellationToken cancellationToken)
+    {
+        var response = await _client.SearchAsync<JobDocument>(s => s
+            .Index(_options.Index)
+            .From(0)
+            .Size(size)
+            .Source(EmbeddingExcluded)
+            .Query(q => q
+                .Bool(b =>
+                {
+                    b.Must(m => m.MultiMatch(mm => KeywordFields(mm, keyword)));
+                    if (filters.Count > 0)
+                        b.Filter(filters.ToArray());
+                })
+            )
+            .Sort(sort => sort
+                .Score(sc => sc.Order(SortOrder.Desc))
+                .Field(f => f.CreatedAt, sc => sc.Order(SortOrder.Desc))),
+            cancellationToken);
+
+        if (!response.IsValidResponse)
+        {
+            _logger.LogError("Elasticsearch hybrid keyword query failed: {DebugInfo}", response.DebugInformation);
+            throw new InvalidOperationException($"Search failed: {response.ElasticsearchServerError?.Error.Reason ?? response.DebugInformation}");
+        }
+
+        var hits = response.Hits
+            .Where(hit => hit.Source is not null)
+            .Select(hit => new ScoredJob(hit.Source!, hit.Score ?? 0))
+            .ToList();
+
+        return (hits, TotalOf(response));
+    }
+
+    /// <summary>Top <paramref name="size"/> kNN hits with their cosine-based scores.</summary>
+    private async Task<IReadOnlyList<ScoredJob>> VectorCandidatesAsync(
+        float[] vector,
+        IReadOnlyList<Query> filters,
+        int size,
+        CancellationToken cancellationToken)
+    {
+        var response = await _client.SearchAsync<JobDocument>(s => s
+            .Index(_options.Index)
+            .Size(size)
+            .Source(EmbeddingExcluded)
+            .Knn(k => k
+                .Field("embedding")
+                .QueryVector(vector)
+                .k(size)
+                .NumCandidates(Math.Max(SemanticMinCandidates, size * SemanticCandidatesPerHit))
+                // Pre-filter: post-filtering would return fewer than k hits for a selective filter.
+                .Filter(filters.ToArray())),
+            cancellationToken);
+
+        if (!response.IsValidResponse)
+        {
+            _logger.LogError("Elasticsearch kNN query failed: {DebugInfo}", response.DebugInformation);
+            throw new InvalidOperationException($"Semantic search failed: {response.ElasticsearchServerError?.Error.Reason ?? response.DebugInformation}");
+        }
+
+        return response.Hits
+            .Where(hit => hit.Source is not null)
+            .Select(hit => new ScoredJob(hit.Source!, hit.Score ?? 0))
+            .ToList();
+    }
+
+    private int HybridPoolSize(SearchQuery query)
+    {
+        var wanted = Math.Max(query.From + query.NormalizedSize, query.NormalizedSize * _hybrid.CandidateMultiplier);
+        return Math.Min(wanted, _hybrid.MaxCandidates);
+    }
+
+    private static bool IsRelevanceSort(string? sortBy) =>
+        string.IsNullOrWhiteSpace(sortBy)
+        || string.Equals(sortBy.Trim(), "relevance", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The BM25 field weights and fuzziness shared by the plain and hybrid keyword queries.</summary>
+    private static MultiMatchQueryDescriptor<JobDocument> KeywordFields(MultiMatchQueryDescriptor<JobDocument> mm, string keyword) => mm
+        .Query(keyword)
+        .Fields(new[]
+        {
+            Infer.Field<JobDocument>(f => f.Title, 2.0),
+            Infer.Field<JobDocument>(f => f.CompanyName, 1.5),
+            Infer.Field<JobDocument>(f => f.Description, 1.0),
+            Infer.Field<JobDocument>(f => f.Requirements!, 0.8)
+        })
+        .Fuzziness(new Fuzziness("AUTO"));
+
+    /// <summary>Filters shared by the BM25 and kNN retrievers (and the pre-hybrid single query).</summary>
+    private static IReadOnlyList<Query> BuildFilters(SearchQuery query)
+    {
+        var filters = new List<Query>();
+
+        // Location filter — MatchPhrase for exact phrase matching (SRS SEARCH-01-03)
+        if (!string.IsNullOrWhiteSpace(query.Location))
+        {
+            filters.Add(new MatchPhraseQuery(Infer.Field<JobDocument>(f => f.Location))
+            {
+                Query = query.Location.Trim()
+            });
+        }
+
+        // Status filter (Default: Active — matches backend JobStatus enum)
+        filters.Add(new TermQuery(Infer.Field<JobDocument>(f => f.Status)) { Value = "Active" });
+
+        // Category filter — use CategoryId (keyword) for exact match, not CategoryName (text)
+        if (!string.IsNullOrWhiteSpace(query.Category))
+        {
+            filters.Add(new TermQuery(Infer.Field<JobDocument>(f => f.CategoryId!))
+            {
+                Value = query.Category.Trim()
+            });
+        }
+
+        // Employment Type filter — CSV "FullTime,PartTime" means any of them (OR),
+        // same semantics as the skills filter (api-conventions §4).
+        var employmentTypes = query.EmploymentTypes;
+        if (employmentTypes.Count > 0)
+        {
+            var values = employmentTypes.Select(v => (FieldValue)v).ToArray();
+            filters.Add(new TermsQuery
+            {
+                Field = Infer.Field<JobDocument>(f => f.EmploymentType),
+                Terms = new TermsQueryField(values)
+            });
+        }
+
+        // Experience Level filter — CSV, OR semantics.
+        var experienceLevels = query.ExperienceLevels;
+        if (experienceLevels.Count > 0)
+        {
+            var values = experienceLevels.Select(v => (FieldValue)v).ToArray();
+            filters.Add(new TermsQuery
+            {
+                Field = Infer.Field<JobDocument>(f => f.ExperienceLevel!),
+                Terms = new TermsQueryField(values)
+            });
+        }
+
+        // Salary range filter (SRS 3.4.4)
+        //    Job has salary range [SalaryMin, SalaryMax].
+        //    Overlap: user's [min,max] must intersect with job's [min,max].
+        //    So: SalaryMax >= userMin AND SalaryMin <= userMax
+        if (query.MinSalary.HasValue)
+        {
+            filters.Add(Query.Range(new RangeQuery(new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMax!))
+            {
+                Gte = (double)query.MinSalary.Value
+            })));
+        }
+        if (query.MaxSalary.HasValue)
+        {
+            filters.Add(Query.Range(new RangeQuery(new NumberRangeQuery(Infer.Field<JobDocument>(f => f.SalaryMin!))
+            {
+                Lte = (double)query.MaxSalary.Value
+            })));
+        }
+
+        // Skills filter — skillOp=or (default): Terms, any requested skill matches.
+        //    skillOp=and: one Term filter per skill, the job must have all of them.
+        //    Field Skills is keyword with "lowercase_normalizer", so ES normalizes both
+        //    index and query values; no manual .ToLowerInvariant() needed here.
+        var skills = query.SkillList;
+        if (skills.Count > 0)
+        {
+            if (query.MatchAllSkills)
+            {
+                foreach (var skill in skills)
+                {
+                    filters.Add(new TermQuery(Infer.Field<JobDocument>(f => f.Skills))
+                    {
+                        Value = skill
+                    });
+                }
+            }
+            else
+            {
+                var values = skills.Select(s => (FieldValue)s).ToArray();
+                filters.Add(new TermsQuery
+                {
+                    Field = Infer.Field<JobDocument>(f => f.Skills),
+                    Terms = new TermsQueryField(values)
+                });
+            }
+        }
+
+        return filters;
+    }
+
+    private static readonly SourceConfig EmbeddingExcluded =
+        new(new SourceFilter { Excludes = "embedding" });
+
+    /// <summary>
+    /// Elastic.Clients.Elasticsearch 8.13.0 does not populate SearchResponse.Total
+    /// from the hits.total union (it reads 0 even when documents are returned).
+    /// Read the true total from HitsMetadata.Total (TotalHits.Value), falling back
+    /// to the page hit count so pagination stays correct.
+    /// </summary>
+    private static long TotalOf(SearchResponse<JobDocument> response) =>
+        response.HitsMetadata?.Total is { } totalHits
+            ? totalHits.Match(total => total.Value, lower => lower)
+            : response.Hits.Count;
     public async Task<IReadOnlyList<SemanticJobHit>> SearchSemanticAsync(string text, int size, CancellationToken cancellationToken = default)
     {
         var vector = (await _embeddings.EmbedAsync([text], cancellationToken))[0];
