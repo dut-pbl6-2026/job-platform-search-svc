@@ -14,6 +14,15 @@ public class IndexTokenPolicyTests
         IndexEndpoints.ConfiguredIndexToken(ConfigWith(value)).Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("__SET_VIA_INFISICAL__")]
+    [InlineData("__ANY_OTHER_PLACEHOLDER__")]
+    [InlineData("  __SET_VIA_INFISICAL__  ")]
+    public void ConfiguredIndexToken_TemplatePlaceholder_IsNull(string value)
+    {
+        IndexEndpoints.ConfiguredIndexToken(ConfigWith(value)).Should().BeNull();
+    }
+
     [Fact]
     public void ConfiguredIndexToken_SurroundingWhitespace_IsTrimmed()
     {
