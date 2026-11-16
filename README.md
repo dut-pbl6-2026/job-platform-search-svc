@@ -37,6 +37,12 @@
 vector 60%), while keeping the same filters, response shape and pagination. There is no new
 client parameter: the web and mobile apps need no change.
 
+- **Recall gate:** the keyword query requires **every word** (`minimum_should_match: 100%`); OR
+  matching made `"công nghệ thông tin"` match every job because `"công"` is in every description. A
+  job that does not match the keywords is only **added** when the keyword side found nothing at all
+  and its vector score reaches `SEARCH_HYBRID_MIN_VECTOR_SCORE` (default `0.72`, where an unrelated
+  job sits ~0.55–0.70 and a real match starts ~0.72). Vector scores still re-rank keyword matches;
+  the floor only gates additions. Without this gate every query returned the whole index, reordered.
 - **Fusion:** each retriever's candidate list is min-max normalised (BM25 scores are 0–20+, cosine
   scores are 0–1, so a raw weighted sum would let BM25 decide alone), then scored as
   `keywordWeight * norm(BM25) + vectorWeight * norm(cosine)`. A job found by only one retriever keeps
@@ -60,6 +66,7 @@ client parameter: the web and mobile apps need no change.
 | Enabled | `SEARCH_HYBRID_ENABLED` | `true` |
 | Keyword weight | `SEARCH_HYBRID_KEYWORD_WEIGHT` | `0.4` |
 | Vector weight | `SEARCH_HYBRID_VECTOR_WEIGHT` | `0.6` |
+| Semantic-add floor | `SEARCH_HYBRID_MIN_VECTOR_SCORE` | `0.72` |
 | Candidates per page | `SEARCH_HYBRID_CANDIDATE_MULTIPLIER` | `3` |
 | Candidate cap | `SEARCH_HYBRID_MAX_CANDIDATES` | `600` |
 
@@ -67,6 +74,7 @@ client parameter: the web and mobile apps need no change.
 # Hybrid ordering: the IT jobs should lead, and the location filter must still apply.
 curl -s --get http://localhost:5003/api/search/jobs --data-urlencode "q=công nghệ thông tin" --data "page=0&size=10"
 curl -s --get http://localhost:5003/api/search/jobs --data-urlencode "q=Java" --data-urlencode "location=Hà Nội"
+curl -s --get http://localhost:5003/api/search/jobs --data-urlencode "q=zzzxx"   # 0 results, not the whole index
 # Keyword-only (rollback switch, no code change):
 SEARCH_HYBRID_ENABLED=false
 ```

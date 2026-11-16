@@ -19,6 +19,15 @@ public class HybridSearchOptions
     public double VectorWeight { get; set; } = 0.6;
 
     /// <summary>
+    /// A job that does not match the keywords is only added when its vector score reaches this floor.
+    /// The kNN score is cosine mapped to 0-1; on the local MiniLM model unrelated jobs sit around
+    /// 0.55-0.70 and a real semantic match starts around 0.72. Without a floor every query returns
+    /// the whole index, just reordered. Vector scores are still used to re-rank keyword matches;
+    /// the floor only gates additions. Set 0 to disable the gate.
+    /// </summary>
+    public double MinVectorScore { get; set; } = 0.72;
+
+    /// <summary>
     /// Candidates fetched per retriever for a page: <c>max(from + size, size * multiplier)</c>.
     /// Higher is more accurate and slower; the pool is clamped by <see cref="MaxCandidates"/>.
     /// </summary>
@@ -37,6 +46,8 @@ public class HybridSearchOptions
             throw new InvalidOperationException("Search:Hybrid weights must not be negative.");
         if (KeywordWeight + VectorWeight <= 0)
             throw new InvalidOperationException("Search:Hybrid weights must not both be zero.");
+        if (MinVectorScore is < 0 or > 1)
+            throw new InvalidOperationException("Search:Hybrid:MinVectorScore must be between 0 and 1.");
         if (CandidateMultiplier < 1)
             throw new InvalidOperationException("Search:Hybrid:CandidateMultiplier must be at least 1.");
         if (MaxCandidates < 1)
