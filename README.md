@@ -31,6 +31,50 @@
 - **Coverage gap:** no Testcontainers here (needs a Docker daemon) — ES query behavior
   (Terms filter, normalizer, `icu_folding`) is verified manually via curl, not unit tests.
 
+## Hybrid search (SRS NIC VECTOR-01-03/04/05)
+
+`GET /api/search/jobs` with `q` now ranks by **BM25 + vector similarity** (default keyword 40% /
+vector 60%), while keeping the same filters, response shape and pagination. There is no new
+client parameter: the web and mobile apps need no change.
+
+- **Fusion:** each retriever's candidate list is min-max normalised (BM25 scores are 0–20+, cosine
+  scores are 0–1, so a raw weighted sum would let BM25 decide alone), then scored as
+  `keywordWeight * norm(BM25) + vectorWeight * norm(cosine)`. A job found by only one retriever keeps
+  that side's contribution; ties break on `created_at` desc, then id, so paging is stable.
+- **Filters:** location / status / category / employment type / experience / salary / skills are sent
+  to **both** the BM25 query and the kNN `filter` (a pre-filter; post-filtering would return short
+  pages). An explicit `sortBy` other than `relevance` skips fusion and keeps the requested order.
+- **Fallback (VECTOR-01-05):** an embedding failure logs a warning and answers with BM25 only; a kNN
+  query failure does the same. Search never returns 5xx because ai-svc is down.
+- **Pagination:** the candidate pool is `max(page*size + size, size * CandidateMultiplier)` per
+  retriever, clamped by `MaxCandidates` (default 600, above the API's `page*size <= 500` guard). The
+  `total` is exact when both retrievers returned fewer than the pool, otherwise the BM25 total (the
+  best available estimate of the fused universe).
+- **Latency:** the embedding call and both ES queries run before the response; a structured log line
+  `Hybrid search: pool=… keywordHits=… vectorHits=… elapsedMs=…` (no query text) records each call.
+  On the seeded 8-job index, requests take ~50–70 ms warm; the first request after a restart pays the
+  ONNX warm-up.
+
+| Setting | Env | Default |
+|---|---|---|
+| Enabled | `SEARCH_HYBRID_ENABLED` | `true` |
+| Keyword weight | `SEARCH_HYBRID_KEYWORD_WEIGHT` | `0.4` |
+| Vector weight | `SEARCH_HYBRID_VECTOR_WEIGHT` | `0.6` |
+| Candidates per page | `SEARCH_HYBRID_CANDIDATE_MULTIPLIER` | `3` |
+| Candidate cap | `SEARCH_HYBRID_MAX_CANDIDATES` | `600` |
+
+```bash
+# Hybrid ordering: the IT jobs should lead, and the location filter must still apply.
+curl -s --get http://localhost:5003/api/search/jobs --data-urlencode "q=công nghệ thông tin" --data "page=0&size=10"
+curl -s --get http://localhost:5003/api/search/jobs --data-urlencode "q=Java" --data-urlencode "location=Hà Nội"
+# Keyword-only (rollback switch, no code change):
+SEARCH_HYBRID_ENABLED=false
+```
+
+`GET /api/search/jobs/semantic` still exists as the raw kNN endpoint (top-N by meaning, Active jobs
+only, no filters, no paging); the product UI does not call it. Search responses are cached for 5
+minutes (`RedisSearchCache`), so after changing a weight flush the `search:` keys or wait out the TTL.
+
 ## Performance (PERF-02)
 
 Target: `PERF-02` — p95 of `GET /api/search/jobs` < 200ms (SRS NFR). The benchmark

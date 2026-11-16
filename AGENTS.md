@@ -33,7 +33,7 @@ Dependency: `Api → Infrastructure → Core → SharedKernel` (`PackageReferenc
 
 ## SRS mapping (SEARCH-01)
 
-- `GET /api/search/jobs?q={keyword}&location={city}&minSalary={n}&maxSalary={n}&skills={s1,s2}&skillOp={or|and}&page={0}&size={20}` — full-text search with relevance scoring + filters (salary overlap, location, skills `skillOp=or` default / `and`, category, CSV multi-value employmentType/experienceLevel = OR), pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`.
+- `GET /api/search/jobs?q={keyword}&location={city}&minSalary={n}&maxSalary={n}&skills={s1,s2}&skillOp={or|and}&page={0}&size={20}` — full-text search with relevance scoring + filters (salary overlap, location, skills `skillOp=or` default / `and`, category, CSV multi-value employmentType/experienceLevel = OR), pagination (page 0-based, size default 20 max 100), returns `{ items, total, page, size, totalPages }`. With `q` and relevance sort it is **hybrid**: BM25 + kNN fused 40/60 (configurable, `HybridSearchOptions`), filters applied to both retrievers, keyword-only fallback on any embedding/kNN failure, candidate pool capped by `SEARCH_HYBRID_MAX_CANDIDATES`.
 - `GET /api/search/jobs/semantic?q={text}&size={1-20}` — kNN over the job embeddings (Active jobs only, no keyword or filters). Returns `{ items: [{ score, job }] }`, most similar first, no paging. 503 when the embedding service is down; there is no keyword fallback.
 - `GET /api/search/suggest?q={prefix}` — autocomplete suggestions (top 5-10).
 - Searchable fields: `title` (text, searchable+sortable), `description` (text, searchable), `company` (text, searchable+filterable+sortable), `location` (text, searchable+filterable+sortable), `salary_min/max` (numeric, filterable range), `category` (keyword, filterable+sortable), `employment_type` (keyword, filterable+sortable), `created_at` (date, sortable).
@@ -86,6 +86,7 @@ var indexName = builder.Configuration["ELASTICSEARCH_INDEX"]
 - `appsettings.Development.json` MAY point to `localhost` **only** for local-dev convenience; never commit real passwords.
 - The single source of truth for all env values is `../job-platform-infra/envs/.env.dev.example` — use `mise run sync-env` to pull it.
 - Required env vars for this service: `ELASTICSEARCH_URL`, `ELASTICSEARCH_INDEX`, `REDIS_URL`, `AI_SERVICE_URL`, `AI_INTERNAL_TOKEN_FOR_SEARCH` (this service's bearer for ai-svc `/api/internal/embed`, named `<CALLEE>_INTERNAL_TOKEN_FOR_<CALLER>`; unset => every embedding call fails).
+- Optional hybrid tuning (defaults in parentheses): `SEARCH_HYBRID_ENABLED` (true), `SEARCH_HYBRID_KEYWORD_WEIGHT` (0.4), `SEARCH_HYBRID_VECTOR_WEIGHT` (0.6), `SEARCH_HYBRID_CANDIDATE_MULTIPLIER` (3), `SEARCH_HYBRID_MAX_CANDIDATES` (600). A negative weight pair or 0/0 fails startup.
 
 ## 2026 best practice (NFR `MAINT`)
 

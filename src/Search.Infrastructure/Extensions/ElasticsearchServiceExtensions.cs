@@ -7,6 +7,7 @@ using Search.Core.Interfaces;
 using Search.Infrastructure.Configuration;
 using Search.Infrastructure.Services;
 using Search.Infrastructure.Workers;
+using System.Globalization;
 using SharedKafkaOptions = SharedKernel.Kafka.KafkaOptions;
 
 namespace Search.Infrastructure.Extensions;
@@ -32,6 +33,15 @@ public static class ElasticsearchServiceExtensions
             o.Password = configuration["ELASTICSEARCH_PASSWORD"] ?? configuration["Elasticsearch:Password"];
             var refreshRaw = configuration["ELASTICSEARCH_REFRESH_ON_WRITE"] ?? configuration["Elasticsearch:RefreshOnWrite"];
             o.RefreshOnWrite = !string.Equals(refreshRaw, "false", StringComparison.OrdinalIgnoreCase);
+        });
+
+        services.Configure<HybridSearchOptions>(o =>
+        {
+            o.Enabled = Bool(configuration["SEARCH_HYBRID_ENABLED"] ?? configuration["Search:Hybrid:Enabled"], true);
+            o.KeywordWeight = Double(configuration["SEARCH_HYBRID_KEYWORD_WEIGHT"] ?? configuration["Search:Hybrid:KeywordWeight"], 0.4);
+            o.VectorWeight = Double(configuration["SEARCH_HYBRID_VECTOR_WEIGHT"] ?? configuration["Search:Hybrid:VectorWeight"], 0.6);
+            o.CandidateMultiplier = Int(configuration["SEARCH_HYBRID_CANDIDATE_MULTIPLIER"] ?? configuration["Search:Hybrid:CandidateMultiplier"], 3);
+            o.MaxCandidates = Int(configuration["SEARCH_HYBRID_MAX_CANDIDATES"] ?? configuration["Search:Hybrid:MaxCandidates"], 600);
         });
 
         services.AddSingleton(sp =>
@@ -110,4 +120,15 @@ public static class ElasticsearchServiceExtensions
 
         return services;
     }
+
+    // Env-first config: a malformed value falls back to the documented default instead of stopping the service;
+    // a weight pair that is negative or all zero is rejected by HybridSearchOptions.Validate at construction.
+    private static bool Bool(string? raw, bool fallback) =>
+        bool.TryParse(raw, out var value) ? value : fallback;
+
+    private static double Double(string? raw, double fallback) =>
+        double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : fallback;
+
+    private static int Int(string? raw, int fallback) =>
+        int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
 }
